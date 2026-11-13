@@ -75,6 +75,9 @@ export {
   validateToolCallParams,
   inferTransportTypeFromUrl,
   inferTransportTypeFromConfig,
+  MEMORY_LOG_REDACTION,
+  isMemoryToolName,
+  redactToolLogValue,
 } from "./utils/index.js";
 
 // =========================
