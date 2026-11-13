@@ -1,96 +1,168 @@
 ---
 title: "使用 Docker 部署 - Xiaozhi Client"
-description: "使用 Docker 或 Docker Compose 快速部署 xiaozhi-client 服务。"
+description: "从当前源码构建 Docker 镜像，在家中运行 MCP 和 WebUI，继续使用小智官方服务。"
 ---
 
 # 使用 Docker 部署
 
-<Callout type="info">
-  **前期准备**:
-  在开始之前，你至少需要有一个小智硬件设备，并已添加至小智官方服务端。并且已准备好
-  Docker 环境
-</Callout>
+本方案在家中的电脑、NAS 或小主机上运行 MCP 客户端和 WebUI。设备继续连接小智官方服务端，在官方控制台选择的 DeepSeek、语音识别和语音合成服务仍由官方提供。家里的容器通过官方 MCP 接入点连接，只需配置 MCP 工具，无需填写本地 LLM、ASR 或 TTS 密钥，也无需修改设备的服务器地址。
 
+镜像从**当前检出的源码和 `pnpm-lock.yaml`** 构建，包含对应的后端、CLI 和 WebUI。修改源码或合并分支后重新构建，容器就会运行这些修改。构建过程中不再从 npm 安装另一个版本的 `xiaozhi-client`。
 
-## 安装方式
+## 准备环境
 
-### 方式一：使用启动脚本（推荐）
+- 已安装并启动 Docker，且 `docker compose version` 可以显示 Docker Compose v2 版本。
+- 小智设备已绑定到官方服务，能够正常对话。
+- 已取得完整源码；首次构建需要下载 Node.js 基础镜像、系统软件包及 Node.js / Python 依赖。
 
-<Callout type="info">
-  如果你的网络环境无法访问 github ，可以使用 gitee 进行安装
-</Callout>
+已有仓库时，进入该仓库并切换到需要部署的分支或提交。源码目录必须与持久化数据目录分开；下例将源码放在 `~/xiaozhi-client-src`，数据仍放在 `~/xiaozhi-client`：
 
-
-<Tabs items={['github', 'gitee']}>
-  <Tab>
-  ```bash
-  # 下载脚本
-  curl -fsSL https://raw.githubusercontent.com/shenjingnan/xiaozhi-client/main/docker/scripts/start.sh | bash
-  ```
-  </Tab>
-  <Tab>
- ```bash
- curl -fsSL https://gitee.com/shenjingnan/xiaozhi-client/raw/main/docker/scripts/start.sh | bash
- ```
-  </Tab>
-</Tabs>
-
-### 方式二：使用 Docker Compose
-
-<Steps>
-  ## 获取 docker-compose.yml
-<Tabs items={['github', 'gitee']}>
-  <Tab>
-  ```bash
-      curl -O https://raw.githubusercontent.com/shenjingnan/xiaozhi-client/main/docker/docker-compose.yml
-  ```
-  </Tab>
-  <Tab>
 ```bash
-      curl -O https://gitee.com/shenjingnan/xiaozhi-client/raw/main/docker/docker-compose.yml
+git clone https://github.com/shenjingnan/xiaozhi-client.git "$HOME/xiaozhi-client-src"
+cd "$HOME/xiaozhi-client-src"
 ```
-  </Tab>
-</Tabs>
 
-## 启动服务
-    ```bash
-    docker-compose up -d
-    ```
-</Steps>
+部署前用以下命令确认当前版本。需要固定版本时，先切换到选定的提交或标签，再构建；不要把旧的预构建镜像当作当前源码的构建结果。
 
-### 方式三：手动启动
+```bash
+git status --short
+git log -1 --oneline
+```
 
-<Steps>
-## 创建挂载点目录
-  ```bash
-  mkdir -p ~/xiaozhi-client
-  ```
+## 构建并启动
 
-## 拉取镜像并启动服务
-    ```bash
-    docker run -d \
-    --name xiaozhi-client \
-    -p 9999:9999 \
-    -v ~/xiaozhi-client:/workspaces \
-    --restart unless-stopped \
-    shenjingnan/xiaozhi-client
-    ```
-</Steps>
+以下命令均在仓库根目录执行：
 
-## 管理接入点
+```bash
+mkdir -p "$HOME/xiaozhi-client"
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker-compose.yml logs -f
+```
 
-<Callout type="info">
-  在启动容器服务之后，我们需要配置小智接入点，才可以正常使用
-</Callout>
+也可运行本地启动脚本。脚本使用同一份 Compose 配置，并等待 HTTP 健康检查通过：
 
-<Steps>
-## 打开管理界面
-    如果你的容器和你的本机在一起，可以直接使用浏览器打开网址：http://localhost:9999
-    如果你是在单独的设备部署容器，请确保你的电脑和单独的容器设备在同一个局域网，然后打开对应IP地址：http://\{容器IP\}:9999
+```bash
+bash docker/scripts/start.sh
+```
 
-## 配置小智接入点
-  TODO
+需要保留完整仓库才能构建；不再使用下载单个 Compose 文件或 `curl | bash` 的安装方式。
 
-## 重启服务
-  TODO
-</Steps>
+默认持久化目录是宿主机的 `~/xiaozhi-client`，容器内对应 `/workspaces`。首次运行会补齐配置文件和依赖模板；后续启动保留已有内容。应用程序和 WebUI 位于镜像内的 `/app`，不会被工作目录挂载覆盖。
+
+### 自定义目录或端口
+
+可通过环境变量修改部署位置。下例将数据放在 `/srv/xiaozhi-client`，使用宿主机端口 19999：
+
+```bash
+export XIAOZHI_DATA_DIR=/srv/xiaozhi-client
+export XIAOZHI_WEB_PORT=19999
+mkdir -p "$XIAOZHI_DATA_DIR"
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+后续管理命令也应使用相同的环境变量。需要长期保存这些设置时，可在仓库根目录的 `.env` 中写入对应变量，并始终从仓库根目录执行 Compose 命令。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `XIAOZHI_DATA_DIR` | `~/xiaozhi-client` | 宿主机持久化目录，建议使用绝对路径 |
+| `XIAOZHI_WEB_PORT` | `9999` | 宿主机访问端口 |
+| `XIAOZHI_BIND_ADDRESS` | `0.0.0.0` | 宿主机监听地址；仅本机使用时可设为 `127.0.0.1` |
+
+容器内 `webUI.port` 保持 9999。修改宿主机端口只需设置 `XIAOZHI_WEB_PORT`，不需要修改配置文件。WebUI 和 `/mcp` 共用此端口，不需要额外开放 3000。
+
+## 配置官方 MCP 接入点
+
+1. 在部署机器上访问 `http://localhost:9999`；其他局域网设备访问 `http://宿主机局域网IP:9999`。如果修改了宿主机端口，使用修改后的端口。
+2. 在小智官方控制台打开所用智能体的 MCP 接入点设置，复制完整的 `wss://...` 接入地址。
+3. 在本项目 WebUI 的接入点管理中添加该地址并保存。地址中的令牌属于密钥，请勿发到公开日志或截图中。
+4. 在 MCP 服务管理中添加所需工具，例如计算器或日期时间服务。首次启动的工具列表为空，因此 WebUI 不会等待示例 MCP 包下载。
+5. 检查接入点连接状态和工具列表，再让小智设备实际调用一次工具。
+
+也可以编辑持久化目录中的 `xiaozhi.config.json`。以下是接入官方服务、添加两个示例工具时的配置结构；将接入点占位值替换成自己的完整地址后再使用：
+
+```json
+{
+  "mcpEndpoint": "wss://请替换为官方提供的完整MCP接入点",
+  "mcpServers": {
+    "calculator": {
+      "command": "npx",
+      "args": ["-y", "@xiaozhi-client/calculator-mcp"]
+    },
+    "datetime": {
+      "command": "npx",
+      "args": ["-y", "@xiaozhi-client/datetime-mcp"]
+    }
+  },
+  "webUI": {
+    "port": 9999
+  }
+}
+```
+
+示例工具首次运行需要从 npm 下载，可在 `args` 中为包名添加明确版本号以固定工具版本。修改文件后重启容器：
+
+```bash
+docker compose -f docker/docker-compose.yml restart
+```
+
+容器只需能够向外访问官方 MCP 接入点和所配置的工具服务。无需在路由器上把 WebUI 端口转发到公网；家用 WebUI 应保留在可信局域网内。
+
+## 安装 MCP 运行依赖
+
+镜像保留 Node.js / `npx` / `pnpm`、Python 虚拟环境、`pip`、`uv` / `uvx`、Git 和 FFmpeg，可运行常见的 Node.js 或 Python MCP 服务。
+
+- `npx` 和 `uvx` 按 MCP 服务配置下载并运行相应工具。
+- 自定义 Node.js 项目可放在持久化目录中；目录没有 `node_modules` 时，入口脚本会安装 `package.json` 中的生产依赖。后续修改依赖时，可执行 `docker compose -f docker/docker-compose.yml exec xiaozhi-client npm install --omit=dev`。
+- 自定义 Python 包写入持久化目录的 `requirements.txt`。容器启动时安装其中的依赖，只有空行或注释时跳过安装；安装失败会停止启动并输出错误。
+- MCP 脚本路径应使用容器内路径，例如 `/workspaces/tools/my-tool.py`。宿主机路径不能直接用于容器内配置。
+
+应用依赖由锁文件固定；用户通过 `npx`、`uvx` 或自定义依赖文件添加的 MCP 工具，需要自行指定版本才能固定其版本。
+
+## 日常管理与更新
+
+```bash
+# 查看容器状态及 HTTP 健康检查结果
+docker compose -f docker/docker-compose.yml ps
+
+# 查看日志
+docker compose -f docker/docker-compose.yml logs -f
+
+# 修改配置后重启
+docker compose -f docker/docker-compose.yml restart
+
+# 停止服务
+docker compose -f docker/docker-compose.yml stop
+
+# 切换或更新源码后，重新构建并替换容器
+docker compose -f docker/docker-compose.yml up -d --build
+
+# 查看当前容器中的应用版本
+docker compose -f docker/docker-compose.yml exec xiaozhi-client xiaozhi --version
+```
+
+**容器的启动、停止、重启和升级由 Docker Compose 管理。** 当前 CLI 的 `start` 会创建后台进程，因此镜像直接运行 `WebServerLauncher.js`，并由 `dumb-init` 传递停止信号和回收子进程。请使用上述 Compose 命令管理生命周期；WebUI 中面向 CLI 的整进程重启、停止和在线升级功能不用于此部署方式。
+
+健康检查请求 `/api/services/health`，验证的是本地 HTTP 服务是否工作。即使尚未配置官方接入点，WebUI 也可以健康运行；`healthy` 不表示官方接入点已连通或所有 MCP 工具都可用，仍需在 WebUI 中检查连接并实际调用工具。
+
+升级前备份整个持久化目录。重新构建和替换镜像不会覆盖已有配置，但应用可能在保存配置时更新文件结构，回退源码时应配合对应备份。
+
+## 常见问题
+
+### 从原有 Docker 部署迁移
+
+新的 Compose 默认复用 `~/xiaozhi-client`，先确认原容器的实际挂载目录并备份。如果已有同名 `xiaozhi-client` 容器由旧脚本或其他 Compose 项目创建，先停止并移除旧容器，再启动新 Compose；保留宿主机数据目录。不要同时运行两个实例使用同一份配置。
+
+### 页面打不开或容器一直不健康
+
+先查看 `docker compose -f docker/docker-compose.yml logs --tail=100`。首次构建需要时间；启动时安装用户依赖或连接已配置的 MCP 服务也可能延迟 HTTP 服务就绪。若出现依赖下载失败、配置 JSON 格式错误或端口占用，先解决日志中的具体错误后再启动。
+
+确认宿主机端口没有被占用，配置中的容器端口仍为 9999，并检查宿主机防火墙是否允许局域网访问。浏览器使用宿主机 IP，不需要查找容器内部 IP。
+
+### 日志提示 LLM 配置未找到
+
+这是本地设备语音处理功能的配置提示。使用官方服务和 MCP 接入点时，不需要为本容器填写 LLM 密钥；请检查官方接入点状态和实际工具调用结果。
+
+### 更新源码后仍像是旧版本
+
+`docker compose restart` 只重启已有容器，不会构建代码。更新源码后执行 `docker compose -f docker/docker-compose.yml up -d --build`，再检查容器内 `xiaozhi --version`。版本号相同的不同提交还应对照部署前记录的 `git log -1 --oneline` 和实际功能变化。
