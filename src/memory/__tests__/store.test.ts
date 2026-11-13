@@ -502,7 +502,9 @@ describe("有来源的本地记忆存储", () => {
     store.setSyncState({ phase: "scanning", page: 2 });
     const path = join(directory, "backup.sqlite");
     store.backup(path);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
     const restored = new MemoryStore(path, { agentId: "test-agent" });
     expect(restored.status()).toMatchObject({ messages: 1, activeMemories: 1 });
     expect(restored.getSyncState()).toEqual({ phase: "scanning", page: 2 });
