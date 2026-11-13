@@ -13,6 +13,7 @@ import type {
   MCPRouteHandler,
   MCPToolHandler,
   MCPToolLogHandler,
+  MemoryApiHandler,
   ServiceApiHandler,
   StaticFileHandler,
   StatusApiHandler,
@@ -36,6 +37,8 @@ export interface HandlerDependencies {
   mcpToolHandler: MCPToolHandler;
   /** 工具调用日志处理器 */
   mcpToolLogHandler: MCPToolLogHandler;
+  /** 本地记忆库管理处理器 */
+  memoryApiHandler: MemoryApiHandler;
   /** 版本信息处理器 */
   versionApiHandler: VersionApiHandler;
   /** 静态文件处理器 */
