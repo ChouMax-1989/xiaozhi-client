@@ -3,6 +3,7 @@
  * 测试 TTSService 的状态管理和音频处理逻辑
  */
 
+import { createTTS } from "univoice";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TTSService, mapClusterToResourceId } from "../tts.service.js";
 
@@ -466,6 +467,55 @@ describe("TTSService", () => {
         packet3,
         30
       );
+    });
+
+    it("缓冲区排空后发送停止消息失败时记录错误，不产生未处理的异步异常", async () => {
+      const mockConn = createMockConnection();
+      const stopError = new Error("停止消息发送失败");
+      mockConn.send
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(stopError);
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      const audioStream = (async function* () {
+        yield { audioChunk: Buffer.alloc(1) };
+      })();
+      vi.mocked(createTTS, { partial: true }).mockReturnValueOnce({
+        speak: vi.fn().mockReturnValue(audioStream),
+      });
+      const service = new TTSService({
+        configProvider: createValidConfigProvider(),
+        getConnection: () => mockConn,
+        logger,
+      });
+
+      vi.useFakeTimers();
+      try {
+        await service.speak("device-1", "你好");
+        const demuxer = demuxerInstances[demuxerInstances.length - 1];
+        demuxer.emit("data", makeOpusPacket());
+        // 音频还在发送时结束输入，覆盖排空轮询中的异步停止路径。
+        demuxer.emit("end");
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(mockConn.send).toHaveBeenLastCalledWith({
+          type: "tts",
+          session_id: "test-session-id",
+          state: "stop",
+        });
+        expect(logger.error).toHaveBeenCalledTimes(1);
+        expect(logger.error).toHaveBeenCalledWith(
+          "[TTSService] sendStopAndCleanup 执行失败: deviceId=device-1",
+          stopError
+        );
+      } finally {
+        service.destroy();
+        vi.useRealTimers();
+      }
     });
 
     it("processBuffer 异常时 finally 块正确重置 isProcessingBuffer", async () => {
