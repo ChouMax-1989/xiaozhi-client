@@ -4,6 +4,11 @@
  * 这是阶段一重构的核心组件，用于消除双层代理架构
  */
 
+import {
+  MEMORY_LOG_REDACTION,
+  isMemoryToolName,
+  redactToolLogValue,
+} from "@/mcp-core";
 import type {
   ClientCapabilities,
   InitializedNotification,
@@ -65,13 +70,34 @@ export class MCPMessageHandler {
     this.logger = logger;
   }
 
+  private isSensitiveCall(name: unknown): boolean {
+    return (
+      isMemoryToolName(name) ||
+      (typeof name === "string" &&
+        this.serviceManager.isSensitiveToolCall?.(name) === true)
+    );
+  }
+
   /**
    * 处理 MCP 消息的统一入口
    * @param message MCP 消息
    * @returns MCP 响应（对于通知消息返回 null）
    */
   async handleMessage(message: MCPMessage): Promise<MCPResponse | null> {
-    this.logger.debug(`处理 MCP 消息: ${message.method}`, message);
+    const toolName =
+      message.params && typeof message.params === "object"
+        ? (message.params as Record<string, unknown>).name
+        : undefined;
+    const sensitive = this.isSensitiveCall(toolName);
+    const loggedMessage = sensitive
+      ? {
+          method: message.method,
+          id: message.id,
+          toolName,
+          parameters: MEMORY_LOG_REDACTION,
+        }
+      : message;
+    this.logger.debug(`处理 MCP 消息: ${message.method}`, loggedMessage);
 
     try {
       // 检查是否为通知消息（没有 id 字段）
@@ -103,13 +129,19 @@ export class MCPMessageHandler {
         default:
           if (isNotification) {
             // 对于未知的通知消息，记录警告但不抛出错误
-            this.logger.warn(`收到未知的通知消息: ${message.method}`, message);
+            this.logger.warn(
+              `收到未知的通知消息: ${message.method}`,
+              loggedMessage
+            );
             return null;
           }
           throw new Error(`未知的方法: ${message.method}`);
       }
     } catch (error) {
-      this.logger.error(`处理消息时出错: ${message.method}`, error);
+      this.logger.error(
+        `处理消息时出错: ${message.method}`,
+        redactToolLogValue(error, sensitive)
+      );
       // 通知消息不需要错误响应
       if (message.id === undefined) {
         return null;
@@ -234,7 +266,10 @@ export class MCPMessageHandler {
         id: id !== undefined ? id : 1,
       };
     } catch (error) {
-      this.logger.error(`工具调用失败: ${params.name}`, error);
+      this.logger.error(
+        `工具调用失败: ${params.name}`,
+        redactToolLogValue(error, this.isSensitiveCall(params.name))
+      );
       throw error;
     }
   }
