@@ -39,6 +39,7 @@ export { StaticFileHandler } from "./static-file.handler.js";
 export * from "./status.handler.js";
 export * from "./mcp-tool.handler.js";
 export * from "./mcp-tool-log.handler.js";
+export { MemoryApiHandler, memoryAdminMiddleware } from "./memory.handler.js";
 export * from "./update.handler.js";
 export * from "./version.handler.js";
 export { TTSApiHandler } from "./tts.handler.js";
