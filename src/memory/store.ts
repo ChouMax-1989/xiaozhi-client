@@ -10,6 +10,8 @@ import {
 import { dirname, isAbsolute, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+// biome-ignore lint/nursery/useImportRestrictions: 管理协议使用独立类型入口，不引入聚合模块的运行时依赖。
+import type * as Admin from "../types/memory-admin.js";
 import {
   type ArchiveChat,
   type ArchiveMessage,
@@ -48,7 +50,46 @@ interface Operation {
   kind: string;
   createdAt: string;
   snapshots: Snapshot[];
+  reason?: string;
   undoneBy?: string;
+}
+
+interface PageOptions {
+  query?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+const identifierSchema = z.string().min(1).max(200);
+const revisionSchema = z.number().int().positive().safe();
+const supportedUndoKinds = new Set(["add", "replace", "reinforce", "retire"]);
+
+function pagination(options: PageOptions) {
+  const input = z
+    .object({
+      query: z.string().trim().max(500).default(""),
+      page: z.number().int().positive().safe().default(1),
+      pageSize: z.number().int().min(1).max(50).default(20),
+    })
+    .parse(options);
+  const offset = (input.page - 1) * input.pageSize;
+  if (!Number.isSafeInteger(offset)) {
+    throw new MemoryError("页码超出有效范围，请重新选择页码。");
+  }
+  return { ...input, offset };
+}
+
+function sourceView(message: SourceMessage): Admin.MemorySourceView {
+  return {
+    id: message.id,
+    chatId: message.chatId,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    sourceId: message.sourceId,
+    revision: message.revision,
+    processedRevision: message.processedRevision,
+  };
 }
 
 // 对象键顺序不同不代表原始资料改变；数组顺序仍然保留。
@@ -230,7 +271,19 @@ export class MemoryStore {
     });
   }
 
-  getSource(id: string): SourceMessage | null {
+  getSource(id: string, revision?: number): SourceMessage | null {
+    identifierSchema.parse(id);
+    if (revision !== undefined) {
+      revisionSchema.parse(revision);
+      // 必须命中请求的历史版本，不能拿当前正文代替旧版证据。
+      return parseRow<SourceMessage>(
+        this.db
+          .prepare(
+            "SELECT json FROM message_versions WHERE id = ? AND revision = ?"
+          )
+          .get(id, revision)
+      );
+    }
     const row = this.db
       .prepare("SELECT json, processed_revision FROM messages WHERE id = ?")
       .get(id);
@@ -238,6 +291,88 @@ export class MemoryStore {
     return message
       ? { ...message, processedRevision: Number(row?.processed_revision) }
       : null;
+  }
+
+  listChats(options: PageOptions = {}): Admin.MemoryPage<Admin.MemoryChatView> {
+    const { query, page, pageSize, offset } = pagination(options);
+    // 导入器允许先写消息；这些会话也必须能在管理页中回查。
+    const chats = `WITH chat_ids AS (
+      SELECT id FROM chats UNION SELECT chat_id AS id FROM messages
+    ), chat_rows AS (
+      SELECT chat_ids.id AS id,
+        substr(COALESCE(
+          CASE WHEN json_type(chats.json, '$.raw.title') = 'text'
+            THEN NULLIF(json_extract(chats.json, '$.raw.title'), '') END,
+          CASE WHEN json_type(chats.json, '$.raw.name') = 'text'
+            THEN NULLIF(json_extract(chats.json, '$.raw.name'), '') END,
+          chat_ids.id
+        ), 1, 200) AS title
+      FROM chat_ids LEFT JOIN chats ON chats.id = chat_ids.id
+    )`;
+    const where = `(? = '' OR instr(lower(chat_rows.id || ' ' || chat_rows.title), lower(?)) > 0
+      OR EXISTS (SELECT 1 FROM messages WHERE messages.chat_id = chat_rows.id
+        AND instr(lower(json_extract(messages.json, '$.content')), lower(?)) > 0))`;
+    const parameters = [query, query, query];
+    const total = Number(
+      this.db
+        .prepare(
+          `${chats} SELECT COUNT(*) AS count FROM chat_rows WHERE ${where}`
+        )
+        .get(...parameters)?.count
+    );
+    const items = this.db
+      .prepare(`${chats} SELECT chat_rows.id, chat_rows.title,
+        (SELECT COUNT(*) FROM messages WHERE chat_id = chat_rows.id) AS message_count,
+        (SELECT COUNT(*) FROM messages WHERE chat_id = chat_rows.id
+          AND processed_revision < revision) AS pending_count,
+        (SELECT MAX(json_extract(json, '$.createdAt')) FROM messages
+          WHERE chat_id = chat_rows.id) AS last_message_at,
+        (SELECT substr(json_extract(json, '$.content'), 1, 200) FROM messages
+          WHERE chat_id = chat_rows.id
+          ORDER BY json_extract(json, '$.createdAt') DESC, rowid DESC LIMIT 1) AS preview
+        FROM chat_rows WHERE ${where}
+        ORDER BY last_message_at DESC, chat_rows.id LIMIT ? OFFSET ?`)
+      .all(...parameters, pageSize, offset)
+      .map(
+        (row): Admin.MemoryChatView => ({
+          id: String(row.id),
+          title: String(row.title),
+          messageCount: Number(row.message_count),
+          pendingCount: Number(row.pending_count),
+          lastMessageAt:
+            typeof row.last_message_at === "string"
+              ? row.last_message_at
+              : null,
+          preview: typeof row.preview === "string" ? row.preview : "",
+        })
+      );
+    return { items, page, pageSize, total };
+  }
+
+  listMessages(
+    options: PageOptions & { chatId?: string } = {}
+  ): Admin.MemoryPage<Admin.MemorySourceView> {
+    const { query, page, pageSize, offset } = pagination(options);
+    const chatId = identifierSchema.optional().parse(options.chatId) ?? null;
+    const where = `(? IS NULL OR chat_id = ?) AND (? = ''
+      OR instr(lower(json_extract(json, '$.content')), lower(?)) > 0)`;
+    const parameters = [chatId, chatId, query, query];
+    const total = Number(
+      this.db
+        .prepare(`SELECT COUNT(*) AS count FROM messages WHERE ${where}`)
+        .get(...parameters)?.count
+    );
+    const items = this.db
+      .prepare(`SELECT json, processed_revision FROM messages WHERE ${where}
+        ORDER BY json_extract(json, '$.createdAt') DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...parameters, pageSize, offset)
+      .map((row) =>
+        sourceView({
+          ...(parseRow<SourceMessage>(row) as SourceMessage),
+          processedRevision: Number(row.processed_revision),
+        })
+      );
+    return { items, page, pageSize, total };
   }
 
   scopeForChat(chatId: string): string {
@@ -357,6 +492,78 @@ export class MemoryStore {
     return parseRow<MemoryRecord>(
       this.db.prepare("SELECT json FROM memories WHERE id = ?").get(id)
     );
+  }
+
+  listMemories(
+    options: PageOptions & { status?: Admin.MemoryListStatus } = {}
+  ): Admin.MemoryPage<MemoryRecord> {
+    const { query, page, pageSize, offset } = pagination(options);
+    const status = z
+      .enum(["all", "active", "candidate", "inactive"])
+      .default("all")
+      .parse(options.status);
+    const now = new Date().toISOString();
+    const current = `(json_extract(json, '$.status') = 'active'
+      AND (json_extract(json, '$.validFrom') IS NULL OR json_extract(json, '$.validFrom') <= ?)
+      AND (json_extract(json, '$.validUntil') IS NULL OR json_extract(json, '$.validUntil') > ?))`;
+    const filters = [
+      `(? = '' OR instr(lower(
+        COALESCE(json_extract(json, '$.subject.label'), '说话人') || ' ' ||
+        json_extract(json, '$.facet') || ' ' || json_extract(json, '$.value') || ' ' ||
+        json_extract(json, '$.conditions') || ' ' || json_extract(json, '$.scope')
+      ), lower(?)) > 0)`,
+    ];
+    const parameters: Array<string | number> = [query, query];
+    if (status === "active") {
+      filters.push(current);
+      parameters.push(now, now);
+    } else if (status === "candidate") {
+      filters.push("json_extract(json, '$.status') = 'candidate'");
+    } else if (status === "inactive") {
+      filters.push(
+        `json_extract(json, '$.status') <> 'candidate' AND NOT ${current}`
+      );
+      parameters.push(now, now);
+    }
+    const where = filters.join(" AND ");
+    const total = Number(
+      this.db
+        .prepare(`SELECT COUNT(*) AS count FROM memories WHERE ${where}`)
+        .get(...parameters)?.count
+    );
+    const items = this.db
+      .prepare(`SELECT json FROM memories WHERE ${where}
+        ORDER BY json_extract(json, '$.observedAt') DESC, id LIMIT ? OFFSET ?`)
+      .all(...parameters, pageSize, offset)
+      .map((row) => parseRow<MemoryRecord>(row) as MemoryRecord);
+    return { items, page, pageSize, total };
+  }
+
+  getMemoryDetail(id: string): Admin.MemoryDetailView | null {
+    identifierSchema.parse(id);
+    const memory = this.getMemory(id);
+    if (!memory) return null;
+    const versions = this.db
+      .prepare(
+        "SELECT json FROM memory_versions WHERE id = ? ORDER BY revision DESC"
+      )
+      .all(id)
+      .map((row) => parseRow<MemoryRecord>(row) as MemoryRecord);
+    const references = new Map<string, SourceReference>();
+    for (const version of versions) {
+      for (const reference of version.sources) {
+        references.set(canonical(reference), reference);
+      }
+    }
+    const sources = Array.from(references.values()).map((reference) => {
+      const message = this.getSource(reference.messageId, reference.revision);
+      return {
+        ...reference,
+        message: message ? sourceView(message) : null,
+        currentRevision: this.getSource(reference.messageId)?.revision ?? null,
+      };
+    });
+    return { memory, versions, sources };
   }
 
   private allMemories(): MemoryRecord[] {
@@ -836,19 +1043,36 @@ export class MemoryStore {
     });
   }
 
+  private isCurrentSummary(summary: SummaryRecord): boolean {
+    return (
+      summary.status === "active" &&
+      summary.memories.every((ref) => {
+        const memory = this.getMemory(ref.id);
+        return memory?.revision === ref.revision && this.isCurrent(memory);
+      })
+    );
+  }
+
   listSummaries(): SummaryRecord[] {
     return this.db
       .prepare("SELECT json FROM summaries")
       .all()
       .map((row) => parseRow<SummaryRecord>(row) as SummaryRecord)
-      .filter(
-        (summary) =>
-          summary.status === "active" &&
-          summary.memories.every((ref) => {
-            const memory = this.getMemory(ref.id);
-            return memory?.revision === ref.revision && this.isCurrent(memory);
-          })
-      );
+      .filter((summary) => this.isCurrentSummary(summary));
+  }
+
+  listAdminSummaries(limit = 100): SummaryRecord[] {
+    z.number().int().min(1).max(100).parse(limit);
+    return this.db
+      .prepare("SELECT json FROM summaries ORDER BY rowid DESC LIMIT ?")
+      .all(limit)
+      .map((row) => {
+        const summary = parseRow<SummaryRecord>(row) as SummaryRecord;
+        // 到期不触发隐式写入，但管理界面不能继续把不可用的概要标为有效。
+        return summary.status === "active" && !this.isCurrentSummary(summary)
+          ? { ...summary, status: "invalidated" as const }
+          : summary;
+      });
   }
 
   captureCandidate(text: string, reason: string) {
@@ -894,6 +1118,82 @@ export class MemoryStore {
       .map((row) => parseRow<Operation>(row) as Operation);
   }
 
+  listAdminOperations(limit = 20): Admin.MemoryOperationView[] {
+    z.number().int().min(1).max(100).parse(limit);
+    return this.operations(limit).map((operation) => {
+      let canUndo =
+        supportedUndoKinds.has(operation.kind) &&
+        !operation.undoneBy &&
+        operation.snapshots.length > 0;
+      if (canUndo) {
+        for (const snapshot of operation.snapshots) {
+          if (
+            this.getMemory(snapshot.id)?.revision !== snapshot.afterRevision
+          ) {
+            canUndo = false;
+            break;
+          }
+          // 与真正撤销使用相同证据保护，避免显示实际不能执行的恢复按钮。
+          if (snapshot.before) {
+            try {
+              this.validateSources(snapshot.before.sources);
+            } catch (error) {
+              if (!(error instanceof MemoryError)) throw error;
+              canUndo = false;
+              break;
+            }
+          }
+        }
+      }
+      return {
+        id: operation.id,
+        kind: operation.kind,
+        createdAt: operation.createdAt,
+        ...(operation.reason ? { reason: operation.reason } : {}),
+        ...(operation.undoneBy ? { undoneBy: operation.undoneBy } : {}),
+        canUndo,
+        memoryIds: operation.snapshots.map((snapshot) => snapshot.id),
+      };
+    });
+  }
+
+  retire(
+    id: string,
+    revision: number,
+    reason: string
+  ): { operationId: string; memory: MemoryRecord } {
+    identifierSchema.parse(id);
+    revisionSchema.parse(revision);
+    const explanation = z.string().trim().min(1).max(1000).parse(reason);
+    return this.transaction(() => {
+      const before = this.getMemory(id);
+      if (!before || before.revision !== revision) {
+        throw new MemoryError("目标记忆不存在或版本已改变，请刷新后重试。");
+      }
+      if (!["active", "candidate"].includes(before.status)) {
+        throw new MemoryError("这条记忆已不再生效，无需重复停用。");
+      }
+      const memory: MemoryRecord = {
+        ...before,
+        revision: before.revision + 1,
+        status: "retracted",
+        reason: explanation,
+      };
+      this.writeMemory(memory);
+      const operation: Operation = {
+        id: randomUUID(),
+        kind: "retire",
+        createdAt: new Date().toISOString(),
+        reason: explanation,
+        snapshots: [{ id, before, afterRevision: memory.revision }],
+      };
+      this.db
+        .prepare("INSERT INTO operations VALUES (?, ?)")
+        .run(operation.id, canonical(operation));
+      return { operationId: operation.id, memory };
+    });
+  }
+
   undo(operationId: string) {
     return this.transaction(() => {
       const operation = parseRow<Operation>(
@@ -901,10 +1201,7 @@ export class MemoryStore {
           .prepare("SELECT json FROM operations WHERE id = ?")
           .get(operationId)
       );
-      if (
-        !operation ||
-        !["add", "replace", "reinforce"].includes(operation.kind)
-      )
+      if (!operation || !supportedUndoKinds.has(operation.kind))
         throw new MemoryError("该操作不存在或不支持撤销");
       if (operation.undoneBy)
         return { operationId: operation.undoneBy, alreadyUndone: true };
@@ -960,7 +1257,13 @@ export class MemoryStore {
       identityMode: this.ownerId
         ? "explicit_single_person"
         : "unknown_per_chat",
-      chats: count("chats"),
+      chats: Number(
+        this.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM (SELECT id FROM chats UNION SELECT chat_id AS id FROM messages)"
+          )
+          .get()?.count
+      ),
       messages: count("messages"),
       pendingMessages: Number(
         this.db

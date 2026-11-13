@@ -45,12 +45,14 @@ import {
   MCPRouteHandler,
   MCPToolHandler,
   MCPToolLogHandler,
+  MemoryApiHandler,
   ServiceApiHandler,
   StaticFileHandler,
   StatusApiHandler,
   TTSApiHandler,
   UpdateApiHandler,
   VersionApiHandler,
+  memoryAdminMiddleware,
 } from "./handlers/index.js";
 import { MCPServiceManager } from "./lib/mcp";
 import type { EnhancedToolInfo } from "./lib/mcp/types.js";
@@ -87,6 +89,7 @@ import {
   esp32Routes,
   mcpRoutes,
   mcpserverRoutes,
+  memoryRoutes,
   miscRoutes,
   servicesRoutes,
   staticRoutes,
@@ -141,6 +144,7 @@ export class WebServer {
   private serviceApiHandler: ServiceApiHandler;
   private mcpToolHandler: MCPToolHandler;
   private mcpToolLogHandler: MCPToolLogHandler;
+  private memoryApiHandler: MemoryApiHandler;
   private versionApiHandler: VersionApiHandler;
   private staticFileHandler: StaticFileHandler;
   private mcpRouteHandler: MCPRouteHandler;
@@ -197,6 +201,7 @@ export class WebServer {
     this.serviceApiHandler = new ServiceApiHandler(this.statusService);
     this.mcpToolHandler = new MCPToolHandler();
     this.mcpToolLogHandler = new MCPToolLogHandler();
+    this.memoryApiHandler = new MemoryApiHandler();
     this.versionApiHandler = new VersionApiHandler();
     this.staticFileHandler = new StaticFileHandler();
     this.mcpRouteHandler = new MCPRouteHandler();
@@ -237,6 +242,7 @@ export class WebServer {
 
       // 1. 读取配置
       const config = await this.loadConfiguration();
+      this.memoryApiHandler.service.captureRuntimeConfiguration(config);
 
       // 2.1. 初始化 MCP 服务器 API 处理器
       this.mcpHandler = new MCPHandler(this.mcpServiceManager, configManager);
@@ -260,6 +266,7 @@ export class WebServer {
 
       this.logger.debug("所有连接初始化完成");
     } catch (error) {
+      this.memoryApiHandler.service.captureRuntimeConfiguration(null);
       this.logger.error("连接初始化失败:", error);
       // 降级模式：即使配置加载失败，也确保 MCPServiceManager 可用
       if (!this.mcpServiceManager) {
@@ -527,6 +534,17 @@ export class WebServer {
     // 这样所有路由都可以使用 c.success、c.fail、c.paginate 方法
     this.app?.use("*", responseEnhancerMiddleware);
 
+    // 在其他依赖注入之前保护记忆路由，拒绝跨源读取、写入和预检。
+    this.app?.use("*", (c, next) => {
+      if (
+        c.req.path === "/api/memory" ||
+        c.req.path.startsWith("/api/memory/")
+      ) {
+        return memoryAdminMiddleware(c, next);
+      }
+      return next();
+    });
+
     // 注入 WebServer 实例到上下文
     // 使用类型断言避免循环引用问题
     this.app?.use("*", async (c, next) => {
@@ -546,8 +564,16 @@ export class WebServer {
     // 小智接入点处理器中间件（在连接管理器中间件之后）
     this.app?.use("*", endpointsMiddleware());
 
-    // CORS 中间件
-    this.app?.use("*", corsMiddleware);
+    // 记忆管理使用前面的独立策略，不继承全站宽松的 CORS。
+    this.app?.use("*", (c, next) => {
+      if (
+        c.req.path === "/api/memory" ||
+        c.req.path.startsWith("/api/memory/")
+      ) {
+        return next();
+      }
+      return corsMiddleware(c, next);
+    });
 
     // 错误处理中间件
     this.app?.onError(errorHandlerMiddleware);
@@ -572,6 +598,7 @@ export class WebServer {
       serviceApiHandler: this.serviceApiHandler,
       mcpToolHandler: this.mcpToolHandler,
       mcpToolLogHandler: this.mcpToolLogHandler,
+      memoryApiHandler: this.memoryApiHandler,
       versionApiHandler: this.versionApiHandler,
       staticFileHandler: this.staticFileHandler,
       mcpRouteHandler: this.mcpRouteHandler,
@@ -612,6 +639,7 @@ export class WebServer {
         update: updateRoutes,
         coze: cozeRoutes,
         "tool-logs": toolLogsRoutes,
+        memory: memoryRoutes,
         mcpserver: mcpserverRoutes,
         endpoint: endpointRoutes,
         misc: miscRoutes,
@@ -932,6 +960,7 @@ export class WebServer {
   }
 
   public stop(): Promise<void> {
+    this.memoryApiHandler.close();
     return new Promise((resolve) => {
       let resolved = false;
 
@@ -1013,6 +1042,7 @@ export class WebServer {
    */
   public destroy(): void {
     this.logger.debug("销毁 WebServer 实例");
+    this.memoryApiHandler.close();
 
     // 移除所有事件监听器，防止内存泄漏
     for (const unsubscribe of this.eventListenerUnsubscribers) {

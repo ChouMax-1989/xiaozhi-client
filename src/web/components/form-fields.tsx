@@ -111,7 +111,7 @@ export function renderFormField<
     <FormField
       key={String(name)}
       control={form.control}
-      name={dynamicPath(String(name))}
+      name={dynamicPath<Output>(String(name))}
       render={({ field }) => (
         <FormItem>
           <FormLabel>
@@ -160,7 +160,7 @@ export function renderSelectFieldWithHandler<
     <FormField
       key={String(name)}
       control={form.control}
-      name={dynamicPath(String(name))}
+      name={dynamicPath<Output>(String(name))}
       render={({ field }) => (
         <FormItem>
           <FormLabel>

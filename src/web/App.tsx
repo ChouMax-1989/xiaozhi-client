@@ -2,7 +2,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { RestartNotificationProvider } from "@/hooks/useRestartNotifications";
 import DashboardPage from "@/pages/DashboardPage";
 import { NetworkServiceProvider } from "@/providers/NetworkServiceProvider";
+import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+
+const MemoryPage = lazy(() => import("@/pages/MemoryPage"));
 
 function App() {
   return (
@@ -13,6 +16,20 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route
+          path="/memory"
+          element={
+            <Suspense
+              fallback={
+                <output className="p-6 text-sm text-muted-foreground">
+                  正在打开记忆库…
+                </output>
+              }
+            >
+              <MemoryPage />
+            </Suspense>
+          }
+        />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
 

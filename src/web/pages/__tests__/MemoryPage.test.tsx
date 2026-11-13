@@ -1,0 +1,117 @@
+import "@testing-library/jest-dom/vitest";
+import MemoryPage from "@/pages/MemoryPage";
+import { memoryApi } from "@/services/memoryApi";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MemoryAdminOverview } from "../../../types/memory-admin";
+
+vi.mock("@/components/site-header", () => ({
+  SiteHeader: () => <header>记忆库</header>,
+}));
+vi.mock("@/components/restart-button", () => ({
+  RestartButton: () => <button type="button">重启服务</button>,
+}));
+vi.mock("@/components/memory/memory-entries", () => ({
+  MemoryEntries: () => <p>记忆列表</p>,
+}));
+
+const overview: MemoryAdminOverview = {
+  settings: {
+    configured: true,
+    serviceName: "local-memory",
+    agentId: "agent-example",
+    ownerId: "",
+    databasePath: "/data/memory.sqlite",
+    tokenConfigured: true,
+    syncIntervalSeconds: 0,
+    syncMaxRequests: 100,
+    identityLocked: true,
+    restartRequired: false,
+  },
+  ready: true,
+  error: null,
+  counts: {
+    chats: 1,
+    messages: 10,
+    pendingMessages: 2,
+    memories: 3,
+    activeMemories: 2,
+    candidates: 1,
+    provisionalCaptures: 0,
+    summaries: 1,
+  },
+  sync: null,
+  syncJob: { state: "idle", startedAt: null, finishedAt: null, message: null },
+  extractionPrompt: "请依据原话整理记忆。",
+};
+
+describe("记忆页面同步状态", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("只在任务运行时轮询，完成后停止并在离开时取消请求", async () => {
+    const running = { ...overview.syncJob, state: "running" as const };
+    const complete = {
+      ...overview.syncJob,
+      state: "complete" as const,
+      finishedAt: "2026-11-13T10:00:00Z",
+    };
+    const getOverview = vi
+      .spyOn(memoryApi, "overview")
+      .mockResolvedValueOnce(overview)
+      .mockResolvedValueOnce({ ...overview, syncJob: running })
+      .mockResolvedValue({ ...overview, syncJob: complete });
+    vi.spyOn(memoryApi, "sync").mockResolvedValue(running);
+    let unmount: () => void = () => undefined;
+    await act(async () => {
+      unmount = render(<MemoryPage />).unmount;
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(getOverview).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "同步对话历史" }));
+    });
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "正在同步…" })).toBeDisabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(getOverview).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("同步完成")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(getOverview).toHaveBeenCalledTimes(3);
+    unmount();
+    expect(getOverview.mock.calls[2][0]?.aborted).toBe(true);
+  });
+
+  it("自动同步开启时禁用手动同步，并保留真实的整理提示入口", async () => {
+    vi.spyOn(memoryApi, "overview").mockResolvedValue({
+      ...overview,
+      settings: { ...overview.settings, syncIntervalSeconds: 300 },
+    });
+    const sync = vi.spyOn(memoryApi, "sync");
+    await act(async () => {
+      render(<MemoryPage />);
+    });
+    expect(screen.getByRole("button", { name: "同步对话历史" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "复制整理提示" })).toBeEnabled();
+    expect(
+      screen.getByText(/自动同步已开启，由服务按间隔同步/)
+    ).toBeInTheDocument();
+    expect(sync).not.toHaveBeenCalled();
+  });
+});
