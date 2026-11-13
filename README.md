@@ -45,7 +45,7 @@
 
 ### 本地安装
 
-> 前置条件：请先完成 Node.js >=22（推荐 24）与 pnpm 的安装
+> 前置条件：请先完成 Node.js >=22.12（推荐 24）与 pnpm 的安装
 
 ```bash
 # 安装
@@ -71,51 +71,41 @@ xiaozhi start
 
 ### 使用 Docker 运行
 
-我们提供了预配置的 Docker 镜像，可以快速启动 xiaozhi-client 环境。
+Docker 镜像从当前完整源码构建，运行版本与源码保持一致。首次启动创建空的 MCP 配置，可在网页中填写小智接入点并添加家庭网络内的 MCP 服务。
 
 #### 前置要求
 
-- 已安装 Docker
+- 已安装 Docker 和 Docker Compose v2
+- 已取得包含本次整合改动的完整源码，并切换到需要部署的分支或提交
 - 已获取小智接入点地址（参见[小智 AI 配置 MCP 接入点的使用说明](https://ccnphfhqs21z.feishu.cn/wiki/HiPEwZ37XiitnwktX13cEM5KnSb)）
 
 #### 快速启动
 
-##### 方式一：使用启动脚本（推荐）
+在源码根目录运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shenjingnan/xiaozhi-client/main/docker/scripts/start.sh | bash
+bash docker/scripts/start.sh
 ```
 
-> 无法访问 `Github` 可以使用 `Gitee` 替代
+启动脚本会构建当前源码并启动容器。请保留完整源码目录，不能仅下载启动脚本或 Compose 文件。
+
+也可以直接使用 Compose：
 
 ```bash
-curl -fsSL https://gitee.com/shenjingnan/xiaozhi-client/raw/main/docker/scripts/start.sh | bash
-```
-
-##### 方式二：使用 Docker Compose
-
-获取 docker-compose.yml 文件：
-
-```bash
-curl -O https://raw.githubusercontent.com/shenjingnan/xiaozhi-client/main/docker/docker-compose.yml
-```
-
-> 无法访问 `Github` 可以使用 `Gitee` 替代
-
-```bash
-curl -O https://gitee.com/shenjingnan/xiaozhi-client/raw/main/docker/docker-compose.yml
-```
-
-```bash
-# 使用 Docker Compose 启动
-docker-compose up -d
+# 从当前源码构建并启动
+docker compose -f docker/docker-compose.yml up -d --build
 
 # 查看日志
-docker-compose logs -f
+docker compose -f docker/docker-compose.yml logs -f
 
-# 停止服务
-docker-compose down
+# 重启或停止
+docker compose -f docker/docker-compose.yml restart
+docker compose -f docker/docker-compose.yml down
 ```
+
+网页默认地址为 `http://<部署设备的IP地址>:9999`。容器内请使用 Compose 管理重启、停止和升级；网页中的 CLI 服务重启、停止和软件包更新入口不适用于此部署方式。
+
+默认持久化目录为 `~/xiaozhi-client`，应与源码目录分开。端口、目录、MCP 配置和更新方法见 [Docker 部署说明](docs/content/usage/docker.mdx)。
 
 ## 贡献者
 

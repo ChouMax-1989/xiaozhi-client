@@ -1,0 +1,30 @@
+# 使用仓库根目录作为构建上下文，排除本机依赖和构建产物。
+.git
+**/node_modules
+**/dist
+**/.next
+**/.cache
+**/.pnpm-store
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+**/*.pid
+**/*.tgz
+logs
+tmp
+temp
+.worktrees
+worktrees
+
+# 不将本地运行配置、密钥或数据发送给构建器。
+**/.env
+**/.env.*
+**/xiaozhi.config.json
+xiaozhi.cache.json
+tool-calls.jsonl
+data
+.xiaozhi-client
+
+# 模板配置必须保留，供首次启动初始化使用。
+!template/xiaozhi.config.json
+!docker/templates/xiaozhi.config.json
