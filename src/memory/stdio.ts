@@ -32,6 +32,8 @@ function log(message: string): void {
 export async function startMemoryStdio(env: NodeJS.ProcessEnv = process.env) {
   const options = loadMemoryOptions(env);
   const maxRequests = syncBudget(env);
+  // 首次启动先验证端点和身份，避免错误配置提前创建并绑定空库。
+  checkClientBinding(options, () => undefined);
   const store = new MemoryStore(options.databasePath, options);
   const guard = () =>
     checkClientBinding(options, (key, value) => store.bindMetadata(key, value));
