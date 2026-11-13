@@ -1,0 +1,102 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+// 使用合成对话验证实际构建产物；不连接官方服务，不调用聊天模型。
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const directory = mkdtempSync(join(tmpdir(), "xiaozhi-memory-smoke-"));
+const runtime = process.env.MEMORY_NODE_BINARY || process.execPath;
+const configFile = join(directory, "xiaozhi.config.json");
+const database = join(directory, "archive.sqlite");
+const cliPath = join(root, "dist/memory/cli.js");
+const env = {
+  ...process.env,
+  XIAOZHI_MEMORY_AGENT_ID: "smoke-agent",
+  XIAOZHI_MEMORY_DB: database,
+  XIAOZHI_MEMORY_CLIENT_CONFIG: configFile,
+  XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS: "0",
+};
+delete env.XIAOZHI_MEMORY_OWNER;
+delete env.XIAOZHI_MEMORY_TOKEN_FILE;
+let client;
+let transport;
+let diagnostics = "";
+
+function cli(args) {
+  const response = spawnSync(runtime, ["--experimental-sqlite", cliPath, ...args], {
+    env, encoding: "utf8", timeout: 20_000,
+  });
+  assert.equal(response.status, 0, "构建后的管理命令应成功退出");
+  return JSON.parse(response.stdout);
+}
+
+async function call(name, args = {}) {
+  const response = await client.callTool({ name, arguments: args });
+  assert.notEqual(response.isError, true, `工具 ${name} 应调用成功`);
+  const content = response.content.find((item) => item.type === "text");
+  assert.ok(content);
+  return JSON.parse(content.text);
+}
+
+try {
+  writeFileSync(configFile, JSON.stringify({ mcpEndpoint: "wss://api.xiaozhi.me/mcp/?token=synthetic-smoke-token" }), { mode: 0o600 });
+  const content = "烟测合成对话：我希望卧室夜间保持26度。";
+  const archive = join(directory, "import.json");
+  writeFileSync(archive, JSON.stringify({ messages: [{
+    id: "message-1", chatId: "chat-1", role: "user", content,
+    createdAt: new Date(Date.now() - 60_000).toISOString(), raw: { synthetic: true },
+  }] }), { mode: 0o600 });
+  assert.equal(cli(["import", archive]).messages.inserted, 1);
+  assert.equal(cli(["status"]).messages, 1);
+
+  client = new Client({ name: "memory-smoke", version: "1.0.0" });
+  transport = new StdioClientTransport({
+    command: runtime,
+    args: ["--experimental-sqlite", join(root, "dist/memory/stdio.js")],
+    env,
+    stderr: "pipe",
+  });
+  transport.stderr?.on("data", (chunk) => { diagnostics += String(chunk); });
+  await client.connect(transport);
+  const tools = await client.listTools();
+  assert.equal(tools.tools.length, 9);
+  const sources = await call("memory_read_sources");
+  const source = sources.messages[0];
+  assert.equal(source.content, content);
+  const input = {
+    requestId: "smoke-memory-1", operation: "add", subject: { kind: "speaker" },
+    facet: "卧室温度", value: "26度", conditions: "夜间", assertion: "explicit",
+    sources: [{ messageId: source.sourceId, revision: source.revision, quote: content }],
+    reason: "合成测试中的明确设置",
+  };
+  const submitted = await call("memory_submit", input);
+  const retried = await call("memory_submit", input);
+  assert.equal(submitted.operationId, retried.operationId);
+  assert.equal(cli(["status"]).activeMemories, 1);
+  await call("memory_save_summary", {
+    requestId: "smoke-summary-1", title: "夜间温度", text: "该会话的说话人明确希望卧室夜间26度。",
+    memories: [{ id: submitted.memory.id, revision: submitted.memory.revision }],
+  });
+  assert.equal((await call("memory_read_summaries")).summaries.length, 1);
+
+  const backup = join(directory, "backup.sqlite");
+  const exported = join(directory, "export.json");
+  cli(["backup", backup]);
+  cli(["export", exported]);
+  assert.equal(JSON.parse(readFileSync(exported, "utf8")).messages.length, 1);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(backup).mode & 0o777, 0o600);
+    assert.equal(statSync(exported).mode & 0o777, 0o600);
+  }
+  assert.ok(!diagnostics.includes(content), "子进程日志不能包含原话");
+  process.stdout.write("构建产物烟测通过：9个工具、原文、幂等写入、概要、管理命令和一致性备份。\n");
+} finally {
+  await client?.close();
+  await transport?.close();
+  rmSync(directory, { recursive: true, force: true });
+}
