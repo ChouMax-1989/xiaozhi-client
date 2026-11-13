@@ -34,9 +34,10 @@
     "xiaozhi-client": "dist/cli/index.js"
   },
   "scripts": {
-    "build": "pnpm run clean:dist && pnpm run build:server && pnpm run build:cli && pnpm run build:web",
+    "build": "pnpm run clean:dist && pnpm run build:server && pnpm run build:cli && pnpm run build:memory && pnpm run build:web",
     "build:server": "cd src/server && tsdown --config-loader unrun",
     "build:cli": "cd src/cli && tsdown --config-loader unrun",
+    "build:memory": "cd src/memory && tsdown --config-loader unrun",
     "build:web": "cd src/web && vite build",
     "dev": "concurrently \"cd src/server && tsdown --config-loader unrun --watch\" \"cd src/cli && tsdown --config-loader unrun --watch\" \"cd src/web && vite\" --prefix \"[{name}]\" --names \"SERVER,CLI,WEB\"",
     "dev:cli": "cd src/cli && tsdown --config-loader unrun --watch",
