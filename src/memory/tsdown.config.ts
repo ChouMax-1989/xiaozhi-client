@@ -2,7 +2,7 @@ import { defineConfig } from "tsdown";
 
 // 独立入口避免普通客户端启动时加载实验性的 SQLite 模块。
 export default defineConfig({
-  entry: { stdio: "stdio.ts", cli: "cli.ts" },
+  entry: { stdio: "stdio.ts", cli: "cli.ts", admin: "admin.ts" },
   outDir: "../../dist/memory",
   format: ["esm"],
   target: "node22",
