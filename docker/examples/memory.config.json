@@ -1,0 +1,17 @@
+{
+  "mcpEndpoint": "wss://请替换为该智能体的官方完整MCP接入点",
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": ["--experimental-sqlite", "/app/dist/memory/stdio.js"],
+      "env": {
+        "XIAOZHI_MEMORY_AGENT_ID": "请替换为智能体ID",
+        "XIAOZHI_MEMORY_DB": "/workspaces/memory/archive.sqlite",
+        "XIAOZHI_MEMORY_CLIENT_CONFIG": "/workspaces/xiaozhi.config.json",
+        "XIAOZHI_MEMORY_TOKEN_FILE": "/workspaces/secrets/xiaozhi-history-token",
+        "XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS": "0"
+      }
+    }
+  },
+  "webUI": { "port": 9999 }
+}
