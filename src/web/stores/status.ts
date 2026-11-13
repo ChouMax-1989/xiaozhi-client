@@ -193,6 +193,7 @@ const initialState: StatusState = {
     interval: 1000, // 1秒检查间隔
     maxAttempts: 60, // 最多检查60次（60秒）
     currentAttempts: 0,
+    consecutiveSuccessCount: 0,
     timeout: 60000, // 60秒总超时
     startTime: null,
   },
