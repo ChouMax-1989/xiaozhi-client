@@ -65,7 +65,8 @@
 - 当前环境没有 Docker 引擎。没有实际执行 Docker 镜像构建、Compose 启动、Node 22 容器运行或 ARM64 镜像验证。宿主上的生产包烟测不能替代这些检查。
 - 没有用户的官方 MCP 接入点令牌和家庭设备，未验证小智官方服务、语音指令和真实家电控制。
 - 本次修改面向家庭本地 Compose 部署，未执行上游的 Docker Hub / npm 发布流程。
-- 没有修改上游仓库。整合结果保留在独立本地分支；推送到 GitHub 需要一个用户可写的仓库副本。
+- 没有修改上游仓库。整合结果已保存到用户仓库 [ChouMax-1989/xiaozhi-client](https://github.com/ChouMax-1989/xiaozhi-client)，通过 [PR #1](https://github.com/ChouMax-1989/xiaozhi-client/pull/1) 合入 `main`，并保留 `integrate/home-mcp-20261113` 分支。
+- 首次导入及合并后的完整文件树为 `16d0981be7ffb1127c85897caf5364eac4a46075`，与已验证的本地提交 `f11a1c247da95397b3e202b11480a692bb89ca6f` 完全相同，包括文件权限。网页导入将远程提交按文件重新组织；合并后仅本报告补充仓库保存状态，源码、配置及测试内容未再修改。
 
 ## 家中部署
 
