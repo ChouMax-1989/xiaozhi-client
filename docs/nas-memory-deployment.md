@@ -1,6 +1,8 @@
 # NAS 部署小智本地记忆
 
-本手册用于 NAS 准备好之后部署；当前尚未在 NAS Docker 和真实小智云端验证，也没有执行部署。请使用包含本次改动的源码构建：截至编写时，`main` 的 `c804ff9` 不包含这批功能，部署入口为 `fix/local-acceptance-20261113` 分支。不要用旧上游镜像代替。分支推送完成后再执行以下步骤；若以后合并，请先核对目标提交确实包含这些改动。
+本手册用于 NAS 准备好之后部署；当前尚未在 NAS Docker 和真实小智云端验证，也没有执行部署。部署入口统一为你的 `ChouMax-1989/xiaozhi-client` 仓库的 `main` 分支，包含逐轮记录、1024字节分段续读、管理界面和动态记忆图谱。本批已验证基线为 `0e4e1e71fa99bff2f04fc07e9990ebe720f96b82`，后续部署使用包含该提交的最新 `main`，无需切回开发分支。旧 `c804ff9` 和上游已发布镜像不包含这批更新，须从源码重新构建。
+
+本地已通过3049项测试（6项跳过）、完整调用链及桌面/手机尺寸浏览器验收；手机结果来自Chrome触控仿真，不等同于真实手机或NAS验收。以下部署命令仅供准备就绪时使用，本次合并不会启动或更新家庭容器。
 
 ## 1. 准备目录与构建
 
@@ -11,11 +13,13 @@ export XIAOZHI_DATA_DIR=/volume1/docker/xiaozhi-client-data
 export XIAOZHI_WEB_PORT=9999
 export XIAOZHI_BIND_ADDRESS=0.0.0.0
 mkdir -p "$XIAOZHI_DATA_DIR"
-git clone --branch fix/local-acceptance-20261113 \
+git clone --branch main \
   https://github.com/ChouMax-1989/xiaozhi-client.git \
   /volume1/docker/xiaozhi-client-src
 cd /volume1/docker/xiaozhi-client-src
 git log -1 --oneline
+# 返回0才表示包含已验证基线；不包含时先检查仓库和分支，停止部署。
+git merge-base --is-ancestor 0e4e1e71fa99bff2f04fc07e9990ebe720f96b82 HEAD || exit 1
 docker compose -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml ps
 docker compose -f docker/docker-compose.yml logs --tail=100
@@ -77,7 +81,21 @@ docker compose -f docker/docker-compose.yml restart xiaozhi-client
 ## 4. 检查、更新和回退
 
 - 检查容器状态及简短日志，打开记忆库核对数据库路径、会话和记忆数量；确认 11 个工具启用并在云端重新发现。待 NAS 和用户在场时，再用合成短句做真实语音验收，核对调用、保存回执、来源和后续检索，不把本机测试当成云端验收。
-- 更新前先做一致性备份，记录当前 `git rev-parse HEAD`、配置和镜像版本。在源码目录拉取确认过的分支提交，再执行 `docker compose -f docker/docker-compose.yml up -d --build`，核对提交、容器和工具。`restart` 不会构建新源码。
+- 更新前先做一致性备份，记录当前 `git rev-parse HEAD`、配置和镜像版本。在源码目录检查本地修改后更新 `main`，再从源码构建，核对提交、容器和工具。`restart` 不会构建新源码。
 - 回退前先再次备份当前库与配置，保留更新后产生的新数据。检出此前记录的受信任提交并重新构建启动，再检查兼容性；若必须恢复旧数据库，停止容器后使用单独保留的一致性备份作为新路径，勿覆盖当前库。恢复旧备份会回到备份时点，备份之后的新记录不会自动合并。
 
 本机角色规则和记忆工具不能保证模型每轮都调用；网络中断、模型未调用或模型不可见的内容需要如实标记为未验证或缺失。
+
+已有源码目录可在备份完成、确认 `git status --short` 为空后执行以下更新步骤；若存在修改，先保留并处理，不使用强制重置。先确认 `git remote get-url origin` 是你的上述仓库，沿用同一组数据目录、端口和绑定地址环境变量：
+
+```bash
+git fetch origin
+git switch main
+git pull --ff-only origin main
+git merge-base --is-ancestor 0e4e1e71fa99bff2f04fc07e9990ebe720f96b82 HEAD || exit 1
+git log -1 --oneline
+docker compose -f docker/docker-compose.yml up -d --build xiaozhi-client
+docker compose -f docker/docker-compose.yml ps
+```
+
+若此前本地检出开发分支且尚无本地 `main`，用 `git switch --track origin/main` 创建跟踪分支，再继续后续命令。所有部署与真实语音验收均等 NAS 准备好后执行。

@@ -17,10 +17,10 @@ description: "从当前源码构建 Docker 镜像，在家中运行 MCP 和 WebU
 - 小智设备已绑定到官方服务，能够正常对话。
 - 已取得完整源码；首次构建需要下载 Node.js 基础镜像、系统软件包及 Node.js / Python 依赖。
 
-已有仓库时，进入该仓库并切换到需要部署的分支或提交。源码目录必须与持久化数据目录分开；下例将源码放在 `~/xiaozhi-client-src`，数据仍放在 `~/xiaozhi-client`：
+已有仓库时，先保留本地修改，再将你的仓库更新到 `main`；当前记忆功能的部署基线检查见上方 NAS 手册。源码目录必须与持久化数据目录分开；下例将源码放在 `~/xiaozhi-client-src`，数据仍放在 `~/xiaozhi-client`：
 
 ```bash
-git clone https://github.com/ChouMax-1989/xiaozhi-client.git "$HOME/xiaozhi-client-src"
+git clone --branch main https://github.com/ChouMax-1989/xiaozhi-client.git "$HOME/xiaozhi-client-src"
 cd "$HOME/xiaozhi-client-src"
 ```
 

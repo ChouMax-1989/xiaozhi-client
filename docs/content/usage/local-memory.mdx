@@ -8,7 +8,7 @@
 
 任务与复核依据见[任务计划](../../plans/local-memory-20261113.md)。实际完成的验证与尚待联调的项目见[实施记录](../../local-memory-implementation-20261113.md)。
 
-准备在家庭 NAS 启用时，按[源码部署与迁移步骤](../../nas-memory-deployment.md)操作；可直接复制的[小智角色追加规则](../../xiaozhi-role-memory-rules.md)已包含逐轮记录、提炼和长结果续读。当前修改位于 `fix/local-acceptance-20261113` 分支，部署应使用该分支源码，不能假定上游镜像或旧 `main` 已包含这些功能。
+准备在家庭 NAS 启用时，按[源码部署与迁移步骤](../../nas-memory-deployment.md)操作；可直接复制的[小智角色追加规则](../../xiaozhi-role-memory-rules.md)已包含逐轮记录、提炼和长结果续读。部署使用 `ChouMax-1989/xiaozhi-client` 仓库包含 `0e4e1e7` 的最新 `main` 源码，重新构建镜像；上游旧镜像与旧 `main` 的 `c804ff9` 不包含这些更新。NAS 部署和真实语音验收留待准备就绪后进行。
 
 ## 可以做什么
 
