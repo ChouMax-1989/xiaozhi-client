@@ -5,6 +5,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+  MEMORY_LOG_REDACTION,
+  isMemoryToolName,
+  redactToolLogValue,
+} from "@/mcp-core";
 import pino from "pino";
 import type { Logger as PinoLogger } from "pino";
 import { logger } from "../../Logger.js";
@@ -36,6 +41,24 @@ export interface ToolCallRecord {
   duration?: number; // 调用耗时（毫秒）
   error?: string; // 错误信息（如果有）
   timestamp?: number; // 时间戳（毫秒）
+}
+
+function redactRecord(record: ToolCallRecord): ToolCallRecord {
+  const sensitive =
+    isMemoryToolName(record.toolName) ||
+    isMemoryToolName(record.originalToolName);
+  if (!sensitive) {
+    return record;
+  }
+  return {
+    ...record,
+    arguments:
+      record.arguments === undefined
+        ? undefined
+        : { redacted: MEMORY_LOG_REDACTION },
+    result: record.result === undefined ? undefined : MEMORY_LOG_REDACTION,
+    error: record.error === undefined ? undefined : MEMORY_LOG_REDACTION,
+  };
 }
 
 /**
@@ -107,7 +130,7 @@ export class ToolCallLogger {
             const message = this.formatConsoleMessage(logObj);
             console.log("[工具调用]", { message });
           } catch {
-            console.log("[工具调用]", { chunk: chunk.trim() });
+            console.log("[工具调用]", { length: chunk.length });
           }
         },
       },
@@ -206,10 +229,16 @@ export class ToolCallLogger {
       await this.cleanupOldRecords();
 
       // 使用 Pino 记录日志，自动处理并发和文件写入
-      this.pinoLogger.info(record, record.toolName);
+      this.pinoLogger.info(redactRecord(record), record.toolName);
     } catch (error) {
       // 记录失败不应该影响主流程，只记录错误日志
-      logger.error("记录工具调用失败", { error });
+      logger.error("记录工具调用失败", {
+        error: redactToolLogValue(
+          error,
+          isMemoryToolName(record.toolName) ||
+            isMemoryToolName(record.originalToolName)
+        ),
+      });
     }
   }
 
@@ -267,14 +296,14 @@ export class ToolCallLogService {
 
     try {
       const content = fs.readFileSync(logFilePath, "utf8");
-      const lines = content
-        .trim()
-        .split("\n")
-        .filter((line) => line.trim() !== "");
+      const lines = content.split("\n");
 
       const records: ToolCallRecord[] = [];
 
-      for (const line of lines) {
+      for (const [index, line] of lines.entries()) {
+        if (!line.trim()) {
+          continue;
+        }
         try {
           const record = JSON.parse(line);
           // 添加时间戳字段（如果 pino 添加了时间信息）
@@ -283,11 +312,17 @@ export class ToolCallLogService {
           }
           // 如果没有时间戳，记录警告信息提示数据质量问题
           if (!record.timestamp) {
-            logger.warn("日志记录缺少时间戳", { line });
+            logger.warn("日志记录缺少时间戳", {
+              lineNumber: index + 1,
+              length: line.length,
+            });
           }
-          records.push(record);
+          records.push(redactRecord(record));
         } catch {
-          logger.warn("跳过无效的日志行", { line });
+          logger.warn("跳过无效的日志行", {
+            lineNumber: index + 1,
+            length: line.length,
+          });
         }
       }
 
