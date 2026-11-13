@@ -3,6 +3,7 @@ import {
   MemoryGraph,
   MemoryGraphExplorer,
 } from "@/components/memory/memory-graph";
+import { MemoryGraphCanvas } from "@/components/memory/memory-graph-canvas";
 import {
   buildMemoryGraph,
   loadGraphMemories,
@@ -16,12 +17,17 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryRecord } from "../../../../types/memory-admin";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+beforeEach(() => {
+  // 真实画布绘制由浏览器验收；组件测试只验证交互及数据边界。
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 });
 
 function record(
@@ -64,9 +70,9 @@ describe("图谱真实关联", () => {
     ];
     const graph = buildMemoryGraph(memories, "subject");
     expect(
-      graph.nodes.filter((node) => !node.memory).map((node) => node.members)
+      graph.edges.map((edge) => [edge.source.memory.id, edge.target.memory.id])
     ).toEqual([["a", "b"]]);
-    expect(graph.edges).toHaveLength(2);
+    expect(graph.edges[0].evidence[0].kind).toBe("subject");
     expect(graph.isolated).toBe(4);
     expect(graph.nodes.filter((node) => node.memory)).toHaveLength(6);
   });
@@ -82,11 +88,12 @@ describe("图谱真实关联", () => {
       ],
       "source"
     );
-    expect(graph.edges).toHaveLength(2);
-    expect(graph.nodes.find((node) => !node.memory)?.members).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(graph.edges).toHaveLength(1);
+    expect([
+      graph.edges[0].source.memory.id,
+      graph.edges[0].target.memory.id,
+    ]).toEqual(["a", "b"]);
+    expect(graph.edges[0].evidence).toHaveLength(1);
     expect(graph.isolated).toBe(2);
   });
 
@@ -112,10 +119,56 @@ describe("图谱真实关联", () => {
       isolated: 0,
     });
   });
+
+  it("综合视角合并共同字段证据，只保留真实记忆节点", () => {
+    const source = { messageId: "source-a", revision: 1, quote: "证据" };
+    const graph = buildMemoryGraph(
+      [
+        record("a", { sources: [source] }),
+        record("b", { sources: [source] }),
+        record("c", { facet: "无共同字段", subject: { kind: "entity" } }),
+      ],
+      "all"
+    );
+    expect(graph.nodes).toHaveLength(3);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0].evidence.map((item) => item.kind)).toEqual([
+      "facet",
+      "subject",
+      "source",
+    ]);
+    expect(graph.isolated).toBe(1);
+    expect(graph.nodes.every((node) => node.memory.id)).toBe(true);
+  });
+
+  it("200条完整共同分类网络布局有界、不丢记录且不改输入", () => {
+    const memories = Array.from({ length: 200 }, (_, index) =>
+      record(`dense-${index}`)
+    );
+    const snapshot = structuredClone(memories);
+    const graph = buildMemoryGraph(memories, "all");
+    expect(graph.nodes).toHaveLength(200);
+    expect(graph.edges).toHaveLength(19900);
+    expect(
+      graph.nodes.every(
+        (node) =>
+          Number.isFinite(node.x) &&
+          Number.isFinite(node.y) &&
+          Math.hypot(node.x, node.y) <= 300
+      )
+    ).toBe(true);
+    expect(
+      new Set(
+        graph.nodes.map((node) => `${node.x.toFixed(2)},${node.y.toFixed(2)}`)
+      ).size
+    ).toBe(200);
+    expect(graph.edges.every((edge) => edge.evidence.length === 2)).toBe(true);
+    expect(memories).toEqual(snapshot);
+  });
 });
 
 describe("图谱有限分页", () => {
-  it("相同成员的多条来源仍有可独立选中的关联点", () => {
+  it("同一对记忆的多条来源合并为一条边并完整保留依据", () => {
     const sources = [
       { messageId: "source-a", revision: 1, quote: "证据甲" },
       { messageId: "source-b", revision: 1, quote: "证据乙" },
@@ -124,12 +177,9 @@ describe("图谱有限分页", () => {
       [record("a", { sources }), record("b", { sources })],
       "source"
     );
-    const hubs = graph.nodes.filter((node) => !node.memory);
-    expect(hubs).toHaveLength(2);
-    expect(
-      Math.hypot(hubs[0].x - hubs[1].x, hubs[0].y - hubs[1].y)
-    ).toBeGreaterThanOrEqual(18);
-    expect(graph.edges).toHaveLength(4);
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0].evidence).toHaveLength(2);
   });
 
   it("最多读取四页共200条，并将取消信号传给每页", async () => {
@@ -168,6 +218,44 @@ describe("图谱有限分页", () => {
 });
 
 describe("图谱交互", () => {
+  it("稀疏和密集数据都适配舞台，初始光点保持屏幕像素大小", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1300, 500)
+    );
+    const onSelect = vi.fn();
+    const view = render(
+      <MemoryGraphCanvas
+        graph={buildMemoryGraph([record("single")], "all")}
+        onSelect={onSelect}
+      />
+    );
+    for (const count of [31, 200]) {
+      const graph = buildMemoryGraph(
+        Array.from({ length: count }, (_, index) => record(`fit-${index}`)),
+        "all"
+      );
+      view.rerender(<MemoryGraphCanvas graph={graph} onSelect={onSelect} />);
+      const svg = screen.getByRole("group", { name: "记忆关系图" });
+      await waitFor(() =>
+        expect(svg).toHaveAttribute("viewBox", "0 0 1300 500")
+      );
+      const transform = svg.querySelector("g")!.getAttribute("transform")!;
+      const scale = Number(transform.match(/scale\(([^)]+)\)/)![1]);
+      const height =
+        Math.max(...graph.nodes.map((node) => node.y)) -
+        Math.min(...graph.nodes.map((node) => node.y));
+      expect(height * scale).toBeCloseTo(400, 4);
+      const radius = Number(
+        svg
+          .querySelector("g[role='button'] circle:nth-of-type(3)")!
+          .getAttribute("r")
+      );
+      expect(radius * scale).toBeGreaterThanOrEqual(3);
+      expect(radius * scale).toBeLessThanOrEqual(3.61);
+      expect(transform).not.toMatch(/NaN|Infinity/);
+    }
+  });
+
   it("默认折叠不读取，收起后取消未完成的请求", async () => {
     const user = userEvent.setup();
     const entries = vi
@@ -208,16 +296,15 @@ describe("图谱交互", () => {
     expect(screen.getByLabelText("图谱缩放比例")).toHaveTextContent("125%");
     await user.click(screen.getByRole("button", { name: "重置图谱视图" }));
     expect(screen.getByLabelText("图谱缩放比例")).toHaveTextContent("100%");
-    await user.click(screen.getByText("相同来源消息", { exact: true }));
-    expect(
-      screen.getByText("2 条记忆在当前视图中没有共同字段，仍保留为独立点。")
-    ).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "图谱关联方式" }));
+    await user.click(screen.getByRole("option", { name: "相同来源消息" }));
+    expect(screen.getByText(/2 条记忆 · 0 条共同字段关联/)).toBeInTheDocument();
     await user.type(
       screen.getByRole("textbox", { name: "筛选已载入记忆" }),
       "温暖"
     );
     expect(
-      await screen.findByText("显示 1 条记忆 · 0 个共同字段")
+      await screen.findByText(/1 条记忆 · 0 条共同字段关联/)
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "查看记忆：喜好：喜欢自然光" })
@@ -228,7 +315,7 @@ describe("图谱交互", () => {
     ).toHaveTextContent("偏好温暖房间");
     await user.click(screen.getByRole("button", { name: "清除图谱筛选" }));
     expect(
-      await screen.findByText("显示 2 条记忆 · 0 个共同字段")
+      await screen.findByText(/2 条记忆 · 0 条共同字段关联/)
     ).toBeInTheDocument();
   });
 
