@@ -5,6 +5,7 @@
 
 import type { CustomMCPTool, ProxyHandlerConfig } from "@/config";
 import { configManager } from "@/config";
+import { isMemoryToolName, redactToolLogValue } from "@/mcp-core";
 import Ajv from "ajv";
 import dayjs from "dayjs";
 import type { Context } from "hono";
@@ -73,12 +74,14 @@ export class MCPToolHandler {
    * POST /api/tools/call
    */
   async callTool(c: Context<AppContext>): Promise<Response> {
+    let sensitiveCall = false;
     try {
       c.get("logger").info("处理工具调用请求");
 
       // 解析请求体
       const requestBody: ToolCallRequest = await c.req.json();
       const { serviceName, toolName, args } = requestBody;
+      sensitiveCall = isMemoryToolName(toolName);
 
       // 验证请求参数
       if (!serviceName || !toolName) {
@@ -89,11 +92,6 @@ export class MCPToolHandler {
           400
         );
       }
-
-      c.get("logger").info(
-        `准备调用工具: ${serviceName}/${toolName}，参数:`,
-        JSON.stringify(args)
-      );
 
       // 从 Context 中获取 MCPServiceManager 实例
       const serviceManager = c.get("mcpServiceManager");
@@ -107,15 +105,30 @@ export class MCPToolHandler {
         );
       }
 
+      const toolKey =
+        serviceName === "customMCP" ? toolName : `${serviceName}__${toolName}`;
+      sensitiveCall =
+        sensitiveCall || serviceManager.isSensitiveToolCall?.(toolKey) === true;
+      c.get("logger").info(
+        `准备调用工具: ${serviceName}/${toolName}，参数:`,
+        JSON.stringify(redactToolLogValue(args, sensitiveCall))
+      );
+
       // 验证服务和工具是否存在
-      await this.validateServiceAndTool(serviceManager, serviceName, toolName);
+      await this.validateServiceAndTool(
+        serviceManager,
+        serviceName,
+        toolName,
+        sensitiveCall
+      );
 
       // 对于 customMCP 工具，进行参数验证
       if (serviceName === "customMCP") {
         await this.validateCustomMCPArguments(
           serviceManager,
           toolName,
-          args || {}
+          args || {},
+          sensitiveCall
         );
       }
 
@@ -136,7 +149,10 @@ export class MCPToolHandler {
 
       return c.success(result, "工具调用成功");
     } catch (error) {
-      c.get("logger").error("工具调用失败:", error);
+      c.get("logger").error(
+        "工具调用失败:",
+        redactToolLogValue(error, sensitiveCall)
+      );
 
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -352,7 +368,8 @@ export class MCPToolHandler {
   private async validateServiceAndTool(
     serviceManager: MCPServiceManager,
     serviceName: string,
-    toolName: string
+    toolName: string,
+    sensitiveCall = false
   ): Promise<void> {
     // 特殊处理 customMCP 服务
     if (serviceName === "customMCP") {
@@ -390,7 +407,7 @@ export class MCPToolHandler {
       } catch (error) {
         this.logger.error(
           `验证 customMCP 工具 '${toolName}' 配置时出错:`,
-          error
+          redactToolLogValue(error, sensitiveCall)
         );
         throw MCPError.validationError(
           MCPErrorCode.TOOL_VALIDATION_FAILED,
@@ -409,7 +426,8 @@ export class MCPToolHandler {
   private async validateCustomMCPArguments(
     serviceManager: MCPServiceManager,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    sensitiveCall = false
   ): Promise<void> {
     try {
       // 获取工具的 inputSchema
@@ -463,7 +481,7 @@ export class MCPToolHandler {
         const errorMessage = `参数验证失败: ${errorMessages.join("; ")}`;
         this.logger.error(
           `customMCP 工具 '${toolName}' 参数验证失败:`,
-          errorMessage
+          redactToolLogValue(errorMessage, sensitiveCall)
         );
 
         throw MCPError.validationError(
@@ -478,7 +496,10 @@ export class MCPToolHandler {
         throw error;
       }
 
-      this.logger.error(`验证 customMCP 工具 '${toolName}' 参数时出错:`, error);
+      this.logger.error(
+        `验证 customMCP 工具 '${toolName}' 参数时出错:`,
+        redactToolLogValue(error, sensitiveCall)
+      );
       throw MCPError.validationError(
         MCPErrorCode.TOOL_VALIDATION_FAILED,
         `参数验证过程中发生错误: ${error instanceof Error ? error.message : "未知错误"}`
