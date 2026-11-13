@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkClientBinding } from "../config.js";
 import { createMemoryServer } from "../mcp.js";
+import { MEMORY_EXTRACTION_RULES, MEMORY_RECORDING_RULES } from "../prompts.js";
 import { MemoryStore } from "../store.js";
 import type {
   ArchiveMessage,
@@ -96,11 +98,54 @@ describe("本地记忆 MCP 真实协议集成", () => {
     ...changes,
   });
 
-  const call = async (
+  const callRaw = async (
     name: string,
     args: Record<string, unknown> = {}
   ): Promise<CallToolResult> =>
     (await client.callTool({ name, arguments: args })) as CallToolResult;
+
+  const call = async (
+    name: string,
+    args: Record<string, unknown> = {}
+  ): Promise<CallToolResult> => {
+    let response = await callRaw(name, args);
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
+      768
+    );
+    if (response.isError) return response;
+    let part = decoded<{
+      segmented?: boolean;
+      cursor: string;
+      offset: number;
+      nextOffset: number | null;
+      totalLength: number;
+      sha256: string;
+      chunk: string;
+    }>(response);
+    if (!part.segmented) return response;
+    const { cursor, totalLength, sha256 } = part;
+    let assembled = "";
+    for (;;) {
+      expect(part.offset).toBe(assembled.length);
+      expect(part.sha256).toBe(sha256);
+      assembled += part.chunk;
+      if (part.nextOffset === null) break;
+      response = await callRaw("memory_read_result", {
+        cursor,
+        offset: part.nextOffset,
+      });
+      expect(response.isError).not.toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
+        768
+      );
+      part = decoded(response);
+    }
+    expect(assembled.length).toBe(totalLength);
+    expect(createHash("sha256").update(assembled, "utf8").digest("hex")).toBe(
+      sha256
+    );
+    return { content: [{ type: "text", text: assembled }] };
+  };
 
   function proposal(
     sourceId: string,
@@ -121,9 +166,9 @@ describe("本地记忆 MCP 真实协议集成", () => {
     };
   }
 
-  it("通过真实客户端列出九个严格工具且不开放管理权限", async () => {
+  it("通过真实客户端列出十一个严格工具且不开放管理权限", async () => {
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(11);
     for (const tool of tools) {
       expect(tool.name).toMatch(/^memory_/u);
       expect(tool.inputSchema.additionalProperties).toBe(false);
@@ -375,15 +420,14 @@ describe("本地记忆 MCP 真实协议集成", () => {
       limit: 20,
     });
     expect(bounded.isError).not.toBe(true);
-    expect(responseText(bounded).length).toBeLessThanOrEqual(32_000);
     const boundedReview = decoded<{
       memories: unknown[];
       provisionalCaptures: unknown[];
       hasMore: boolean;
     }>(bounded);
     expect(boundedReview.memories).toHaveLength(1);
-    expect(boundedReview.provisionalCaptures).toHaveLength(1);
-    expect(boundedReview.hasMore).toBe(true);
+    expect(boundedReview.provisionalCaptures).toHaveLength(2);
+    expect(boundedReview.hasMore).toBe(false);
     const limited = decoded<{
       memories: unknown[];
       provisionalCaptures: unknown[];
@@ -439,7 +483,6 @@ describe("本地记忆 MCP 真实协议集成", () => {
       }),
     ]);
     const firstResponse = await call("memory_read_sources");
-    expect(responseText(firstResponse).length).toBeLessThanOrEqual(32_000);
     expect(responseText(firstResponse)).not.toContain("privateEnvelope");
     const first = decoded<{ messages: SourceView[] }>(firstResponse)
       .messages[0];
@@ -456,7 +499,6 @@ describe("本地记忆 MCP 真实协议集成", () => {
         length: 8_000,
       });
       expect(response.isError).not.toBe(true);
-      expect(responseText(response).length).toBeLessThanOrEqual(32_000);
       const part = decoded<SourceView>(response);
       expect(part.contentOffset).toBe(offset);
       reconstructed += part.content;
@@ -482,7 +524,6 @@ describe("本地记忆 MCP 真实协议集成", () => {
     );
     const response = await call("memory_read_sources", { limit: 12 });
     expect(response.isError).not.toBe(true);
-    expect(responseText(response).length).toBeLessThanOrEqual(32_000);
     const page = decoded<{ messages: SourceView[]; nextCursor: string | null }>(
       response
     );
@@ -537,5 +578,318 @@ describe("本地记忆 MCP 真实协议集成", () => {
     expect(filesystem.isError).toBe(true);
     expect(responseText(filesystem)).not.toContain(secret);
     expect(responseText(filesystem)).toContain("本地记忆操作未完成");
+  });
+
+  it("按绑定身份记录模型自报并拒绝篡改和无效参数", async () => {
+    expect(MEMORY_RECORDING_RULES).toContain(
+      "memory_search(includeCandidates:true)"
+    );
+    expect(MEMORY_RECORDING_RULES).toContain("不能当作已确认事实");
+    expect(MEMORY_EXTRACTION_RULES).toContain("接收时间不等于发言时间");
+    const tool = (await client.listTools()).tools.find(
+      (item) => item.name === "memory_read_sources"
+    );
+    expect(tool?.description).toContain("已保存消息、来源标识");
+    const input = {
+      requestId: "record-0001",
+      conversationId: "dialogue",
+      role: "user",
+      content: "  原样\n ",
+    };
+    const first = decoded<{
+      sourceId: string;
+      chatId: string;
+      receiptId: string;
+      origin: string;
+    }>(await call("memory_record_turn", input));
+    expect(first.origin).toBe("model_reported");
+    expect(store.listChats({ query: "原样" }).items[0].id).toBe(first.chatId);
+    const titled = {
+      ...input,
+      requestId: "title-request-1",
+      conversationId: "new-conversation",
+      conversationTitle: "合成标题",
+    };
+    const titleReceipt = decoded<{ chatId: string }>(
+      await call("memory_record_turn", titled)
+    );
+    expect(store.listChats({ query: "合成标题" }).items[0].id).toBe(
+      titleReceipt.chatId
+    );
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...titled,
+          conversationTitle: "变化标题",
+        })
+      ).isError
+    ).toBe(true);
+    await call("memory_record_turn", {
+      ...titled,
+      requestId: "title-request-2",
+      conversationTitle: "新标题",
+    });
+    expect(store.listChats({ query: "合成标题" }).total).toBe(1);
+    expect(
+      decoded<{ receiptId: string; duplicate: boolean }>(
+        await call("memory_record_turn", input)
+      )
+    ).toMatchObject({ receiptId: first.receiptId, duplicate: true });
+    expect(
+      (await call("memory_record_turn", { ...input, content: "不同内容" }))
+        .isError
+    ).toBe(true);
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...input,
+          requestId: "record-0002",
+          role: "system",
+        })
+      ).isError
+    ).toBe(true);
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...input,
+          requestId: "record-0003",
+          content: "x".repeat(8001),
+        })
+      ).isError
+    ).toBe(true);
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...input,
+          requestId: "record-0004",
+          agentId: "other",
+        })
+      ).isError
+    ).toBe(true);
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...input,
+          requestId: "record-0005",
+          sourceId: "official",
+        })
+      ).isError
+    ).toBe(true);
+    expect(
+      (
+        await call("memory_record_turn", {
+          ...input,
+          requestId: "record-0006",
+          assistantStage: "final",
+        })
+      ).isError
+    ).toBe(true);
+    expect(
+      decoded<{ origin: string; content: string; createdAt: string | null }>(
+        await call("memory_read_source", { messageId: first.sourceId })
+      )
+    ).toMatchObject({
+      origin: "model_reported",
+      content: input.content,
+      createdAt: null,
+    });
+    const submitted = await call(
+      "memory_submit",
+      proposal(first.sourceId, "原样", { requestId: "memory-report-0001" })
+    );
+    expect(
+      decoded<{
+        memory: {
+          status: string;
+          category: string;
+          facet: string;
+          sources: { origin: string }[];
+        };
+      }>(submitted).memory
+    ).toMatchObject({
+      status: "candidate",
+      category: "user_profile",
+      facet: "咖啡偏好",
+      sources: [{ origin: "model_reported" }],
+    });
+    const assistant = decoded<{ sourceId: string; assistantStage: string }>(
+      await call("memory_record_turn", {
+        ...input,
+        requestId: "record-assistant-1",
+        role: "assistant",
+        assistantStage: "draft",
+      })
+    );
+    expect(assistant.assistantStage).toBe("draft");
+    expect(
+      decoded<{ assistantStage: string }>(
+        await call("memory_read_source", { messageId: assistant.sourceId })
+      ).assistantStage
+    ).toBe("draft");
+    expect(store.listMessages({ chatId: first.chatId }).items[0]).toMatchObject(
+      { origin: "model_reported", content: input.content }
+    );
+    expect(store.exportData().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: first.sourceId,
+          origin: "model_reported",
+        }),
+      ])
+    );
+    const backup = join(directory, "backup.sqlite");
+    store.backup(backup);
+    const restored = new MemoryStore(backup, options);
+    expect(restored.getSource(first.sourceId)?.content).toBe(input.content);
+    expect(
+      restored.recordTurn(input as Parameters<MemoryStore["recordTurn"]>[0])
+    ).toMatchObject({ receiptId: first.receiptId, duplicate: true });
+    restored.close();
+    expect(() =>
+      store.upsertMessages([archive("same", "伪造", { chatId: first.chatId })])
+    ).toThrow();
+    const official = archive("same", "官方历史", {
+      raw: { origin: "model_reported" },
+    });
+    store.upsertMessages([official]);
+    const officialSource = store.readSources({ chatId: official.chatId })
+      .messages[0];
+    expect(officialSource.sourceId).not.toBe(first.sourceId);
+    expect(
+      decoded<{ origin: string }>(
+        await call("memory_read_source", { messageId: officialSource.sourceId })
+      ).origin
+    ).toBe("archive");
+  });
+
+  it("分类检索在限制数量前过滤并保留来源", async () => {
+    store.upsertMessages([
+      archive("旧画像", "我喝咖啡不加糖。", {
+        createdAt: "2026-01-01T00:00:00Z",
+      }),
+      archive("新情境", "我喝咖啡不加糖。", {
+        createdAt: "2026-02-01T00:00:00Z",
+      }),
+    ]);
+    const sources = store.readSources({ pendingOnly: false }).messages;
+    store.submit(
+      proposal(sources[0].sourceId, sources[0].content, {
+        requestId: "category-profile-1",
+        facet: "interests",
+      })
+    );
+    store.submit(
+      proposal(sources[1].sourceId, sources[1].content, {
+        requestId: "category-situation-1",
+        facet: "recent_event",
+        assertion: "event",
+      })
+    );
+    const found = decoded<{
+      memories: {
+        category: string;
+        facet: string;
+        sources: { origin: string }[];
+      }[];
+    }>(
+      await call("memory_search", {
+        category: "user_profile",
+        includeCandidates: true,
+        limit: 1,
+      })
+    );
+    expect(found.memories).toMatchObject([
+      {
+        category: "user_profile",
+        facet: "interests",
+        sources: [{ origin: "archive" }],
+      },
+    ]);
+  });
+
+  it("自动标题截断不会拆开补充平面字符", async () => {
+    const content = `${"甲".repeat(99)}😀后续`;
+    const recorded = decoded<{ chatId: string }>(
+      await call("memory_record_turn", {
+        requestId: "emoji-title-test",
+        conversationId: "emoji-conversation",
+        role: "user",
+        content,
+      })
+    );
+    const chat = store
+      .listChats({ query: "甲" })
+      .items.find((item) => item.id === recorded.chatId);
+    expect(chat?.title).toBe("甲".repeat(99));
+    expect(
+      store.listMessages({ chatId: recorded.chatId }).items[0].content
+    ).toBe(content);
+  });
+
+  it("续读验证游标位置、过期和跨进程删除，不能泄露旧快照", async () => {
+    const original = archive("分段证据", "证据原文");
+    store.upsertMessages([original]);
+    const source = store.readSources().messages[0];
+    const saved = store.submit(
+      proposal(source.sourceId, original.content, {
+        requestId: "snapshot-delete-1",
+        value: '引用📚\\"\n'.repeat(100),
+      })
+    );
+    const response = await callRaw("memory_search", { limit: 1 });
+    const first = decoded<{ cursor: string; nextOffset: number }>(response);
+    expect(first.nextOffset).toBeGreaterThan(0);
+    expect(
+      (
+        await callRaw("memory_read_result", {
+          cursor: first.cursor,
+          offset: first.nextOffset + 1,
+        })
+      ).isError
+    ).toBe(true);
+    const again = decoded<{ cursor: string; nextOffset: number }>(
+      await callRaw("memory_search", { limit: 1 })
+    );
+    const other = new MemoryStore(options.databasePath, options);
+    other.deleteMemory(saved.memory.id, saved.memory.revision);
+    other.close();
+    const stale = await callRaw("memory_read_result", {
+      cursor: again.cursor,
+      offset: again.nextOffset,
+    });
+    expect(stale.isError).toBe(true);
+    expect(responseText(stale)).not.toContain("引用📚");
+    const latest = decoded<{ cursor: string; nextOffset: number }>(
+      await callRaw("memory_read_sources")
+    );
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120_001);
+    expect(
+      (
+        await callRaw("memory_read_result", {
+          cursor: latest.cursor,
+          offset: latest.nextOffset,
+        })
+      ).isError
+    ).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it("SDK 参数校验错误也应保持有界且不回显参数", async () => {
+    const extra = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [
+        `unknown_${index}`,
+        "私密".repeat(400),
+      ])
+    );
+    const invalid = await callRaw("memory_record_turn", {
+      ...extra,
+      requestId: "invalid-params",
+      conversationId: "test",
+      role: "invalid",
+      content: "私密".repeat(4000),
+    });
+    expect(invalid.isError).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(invalid))).toBeLessThanOrEqual(768);
+    expect(responseText(invalid)).not.toContain("私密");
   });
 });

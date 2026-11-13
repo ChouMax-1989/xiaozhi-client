@@ -4,17 +4,10 @@
  * 展示 ASR/LLM/TTS 配置状态，提供语音交互设置入口。
  */
 
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ManagementStatus } from "@/components/management-page";
 import { VoiceInteractionSettingDialog } from "@/components/voice-interaction-setting-dialog";
 import { useVoiceInteractionConfig } from "@/stores/config";
 import { useMemo } from "react";
-import { MiniCircularProgress } from "./mini-circular-progress";
 
 /**
  * 检查 ASR 是否已配置
@@ -71,40 +64,17 @@ export function VoiceInteractionCard() {
   if (isTTSReady(tts)) statusParts.push("TTS");
 
   return (
-    <Card className="@container/card">
-      <CardHeader className="relative">
-        <CardDescription>实时语音</CardDescription>
-        <CardTitle className="@[250px]/card:text-3xl text-2xl font-semibold tabular-nums">
-          {configuredCount}/{totalItems} 就绪
-        </CardTitle>
-        <div className="absolute right-4 top-4">
-          <MiniCircularProgress
-            showValue={true}
-            value={configuredCount}
-            maxValue={totalItems}
-            activeColor={
-              completionRate >= 1
-                ? "#16a34a"
-                : completionRate >= 0.66
-                  ? "#f59e0b"
-                  : "#f87171"
-            }
-            inactiveColor="#e5e7eb"
-            size={30}
-            symbol=""
-          />
-        </div>
-      </CardHeader>
-      <CardFooter className="flex items-center justify-between gap-1 text-sm">
-        <div className="text-muted-foreground">
-          {completionRate === 1
-            ? "语音交互已就绪"
-            : statusParts.length > 0
-              ? `${statusParts.join("、")} 已配置`
-              : "请配置语音服务"}
-        </div>
-        <VoiceInteractionSettingDialog />
-      </CardFooter>
-    </Card>
+    <ManagementStatus
+      title="实时语音"
+      value={`${configuredCount}/${totalItems} 就绪`}
+      description={
+        completionRate === 1
+          ? "语音交互已就绪"
+          : statusParts.length > 0
+            ? `${statusParts.join("、")} 已配置`
+            : "请配置语音服务"
+      }
+      actions={<VoiceInteractionSettingDialog />}
+    />
   );
 }

@@ -37,7 +37,7 @@ export function McpServerTableDialog() {
           <Server className="size-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-5xl max-h-[85vh]">
+      <DialogContent className="max-w-5xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>MCP 服务器列表</DialogTitle>
         </DialogHeader>

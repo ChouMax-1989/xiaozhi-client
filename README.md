@@ -34,7 +34,9 @@
 - 支持 集成 ModelScope 的远程 MCP 服务
 - 支持 通过模板创建 xiaozhi-client 项目 (xiaozhi create \<my-app\> --template \<template-name\>)
 - 支持 后台运行(xiaozhi start -d)
-- 本仓库新增可选的[本地记忆库](docs/content/usage/local-memory.mdx)：存档官方对话，由小智现有聊天模型通过 MCP 提炼，保存来源、版本、纠正和概要；记忆功能使用单智能体独立实例。
+- 本仓库新增可选的[本地记忆库](docs/content/usage/local-memory.mdx)：通过 MCP 逐轮记录模型提交的对话，由小智现有聊天模型提炼；支持会话、用户画像、情境记忆及关联图谱，保留来源和版本。记忆功能使用单智能体独立实例。
+
+本分支的记忆功能请按 [NAS 源码部署与迁移手册](docs/nas-memory-deployment.md)启用，并追加[小智角色记忆规则](docs/xiaozhi-role-memory-rules.md)。无需网页登录凭据；旧历史导入为可选能力。模型提交不等同于官方完整日志。NAS 与真实语音验收留待设备准备好后进行。
 
 ![Web UI 配置界面](https://raw.githubusercontent.com/shenjingnan/xiaozhi-client/main/docs/public/images/web-ui-preview.png)
 

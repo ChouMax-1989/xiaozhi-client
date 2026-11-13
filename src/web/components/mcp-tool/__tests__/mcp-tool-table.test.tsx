@@ -219,3 +219,23 @@ describe("McpToolTable", () => {
     });
   });
 });
+
+it("具名开关提交正确服务与工具，成功后重新读取列表", async () => {
+  const user = userEvent.setup();
+  vi.clearAllMocks();
+  vi.mocked(apiClient.getToolsList).mockResolvedValue(mockTools as never);
+  vi.mocked(apiClient.manageMCPTool).mockResolvedValue({} as never);
+  render(<McpToolTable initialStatus="all" />);
+  await user.click(
+    await screen.findByRole("switch", { name: "启用工具 tool1" })
+  );
+  await waitFor(() =>
+    expect(apiClient.manageMCPTool).toHaveBeenCalledWith({
+      action: "disable",
+      serverName: "server1",
+      toolName: "tool1",
+      description: "测试工具1",
+    })
+  );
+  await waitFor(() => expect(apiClient.getToolsList).toHaveBeenCalledTimes(2));
+});

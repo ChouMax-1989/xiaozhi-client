@@ -5,17 +5,10 @@
  */
 
 import { AddMcpServerButton } from "@/components/add-mcp-server-button";
+import { ManagementStatus } from "@/components/management-page";
 import { McpServerTableDialog } from "@/components/mcp-server/mcp-server-table-dialog";
 import { ToolCallLogsDialog } from "@/components/tool-call-logs-dialog";
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { useMcpServersWithStatus } from "@/stores/config";
-import { MiniCircularProgress } from "./mini-circular-progress";
 
 /**
  * MCP 服务状态卡片组件
@@ -29,34 +22,17 @@ export function ServerStatusCard() {
   const connectedServers = servers.filter((s) => s.connected).length;
 
   return (
-    <Card className="@container/card">
-      <CardHeader className="relative">
-        <CardDescription>MCP服务</CardDescription>
-        <CardTitle className="@[250px]/card:text-3xl text-2xl font-semibold tabular-nums">
-          {connectedServers}/{totalServers}
-        </CardTitle>
-        <div className="absolute right-4 top-4">
-          <MiniCircularProgress
-            showValue={false}
-            value={connectedServers}
-            maxValue={Math.max(totalServers, 1)}
-            activeColor="#16a34a"
-            inactiveColor="#f87171"
-            size={30}
-            symbol=""
-          />
-        </div>
-      </CardHeader>
-      <CardFooter className="flex items-center justify-between gap-1 text-sm">
-        <div className="text-muted-foreground">
-          已连接 {connectedServers} 个，共 {totalServers} 个服务
-        </div>
-        <div className="flex gap-2">
+    <ManagementStatus
+      title="MCP服务"
+      value={`${connectedServers}/${totalServers}`}
+      description={`已连接 ${connectedServers} 个，共 ${totalServers} 个服务`}
+      actions={
+        <>
           <AddMcpServerButton />
           <McpServerTableDialog />
           <ToolCallLogsDialog />
-        </div>
-      </CardFooter>
-    </Card>
+        </>
+      }
+    />
   );
 }

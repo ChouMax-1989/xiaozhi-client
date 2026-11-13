@@ -12,6 +12,8 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 // biome-ignore lint/nursery/useImportRestrictions: 管理协议使用独立类型入口，不引入聚合模块的运行时依赖。
 import type * as Admin from "../types/memory-admin.js";
+// biome-ignore lint/nursery/useImportRestrictions: 与前端共用纯展示分类。
+import { getMemoryCategory } from "../types/memory-display.js";
 import {
   type ArchiveChat,
   type ArchiveMessage,
@@ -21,10 +23,12 @@ import {
   type MemoryOptions,
   type MemoryProposal,
   type MemoryRecord,
+  type RecordTurn,
   type SourceMessage,
   type SourceReference,
   type SummaryRecord,
   memoryProposalSchema,
+  recordTurnSchema,
   summaryProposalSchema,
 } from "./types.js";
 
@@ -89,6 +93,15 @@ function sourceView(message: SourceMessage): Admin.MemorySourceView {
     sourceId: message.sourceId,
     revision: message.revision,
     processedRevision: message.processedRevision,
+    origin:
+      message.origin ??
+      (message.sourceId.startsWith("model_msg_")
+        ? "model_reported"
+        : "archive"),
+    ...(message.assistantStage
+      ? { assistantStage: message.assistantStage }
+      : {}),
+    ...(message.recordedAt ? { recordedAt: message.recordedAt } : {}),
   };
 }
 
@@ -143,6 +156,7 @@ export class MemoryStore {
         PRAGMA foreign_keys = ON;
         PRAGMA busy_timeout = 5000;
         PRAGMA journal_mode = WAL;
+        PRAGMA secure_delete = ON;
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS messages (
@@ -190,6 +204,10 @@ export class MemoryStore {
     this.db.close();
   }
 
+  dataVersion(): number {
+    return Number(this.db.prepare("PRAGMA data_version").get()?.data_version);
+  }
+
   private transaction<T>(work: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -223,6 +241,8 @@ export class MemoryStore {
     })
       .strict()
       .parse(chat);
+    if (chat.id.startsWith("model_chat_"))
+      throw new MemoryError("该会话标识保留给模型自报记录。");
     this.db
       .prepare(
         "INSERT INTO chats VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json"
@@ -232,6 +252,9 @@ export class MemoryStore {
 
   upsertMessages(inputs: ArchiveMessage[]): ImportCounts {
     const messages = z.array(archiveSchema).max(10_000).parse(inputs);
+    if (messages.some((message) => message.chatId.startsWith("model_chat_"))) {
+      throw new MemoryError("该会话标识保留给模型自报记录。");
+    }
     return this.transaction(() => {
       const counts: ImportCounts = { inserted: 0, updated: 0, unchanged: 0 };
       for (const input of messages) {
@@ -271,18 +294,105 @@ export class MemoryStore {
     });
   }
 
+  recordTurn(value: RecordTurn) {
+    const input = recordTurnSchema.parse(value);
+    return this.transaction(() => {
+      const key = `record_turn:${input.requestId}`;
+      const cached = this.cachedRequest<{
+        receiptId: string;
+        sourceId: string;
+        chatId: string;
+        origin: "model_reported";
+        assistantStage?: "draft" | "final" | "unknown";
+      }>(key, input);
+      if (cached) return { ...cached, duplicate: true };
+      const chatId = `model_chat_${digest([this.agentId, input.conversationId])}`;
+      const sourceId = `model_msg_${randomUUID()}`;
+      const receiptId = randomUUID();
+      const createdAt = new Date().toISOString();
+      const existingChat = parseRow<ArchiveChat>(
+        this.db.prepare("SELECT json FROM chats WHERE id = ?").get(chatId)
+      );
+      const previousTitle =
+        typeof existingChat?.raw.title === "string"
+          ? existingChat.raw.title
+          : "";
+      const title =
+        previousTitle ||
+        input.conversationTitle ||
+        (input.role === "user"
+          ? input.content
+              .trim()
+              .slice(0, 100)
+              .replace(/[\uD800-\uDBFF]$/u, "")
+          : "");
+      const chat: ArchiveChat = {
+        id: chatId,
+        raw: { origin: "model_reported", ...(title ? { title } : {}) },
+      };
+      const message: SourceMessage = {
+        id: sourceId,
+        sourceId,
+        chatId,
+        role: input.role,
+        content: input.content,
+        createdAt: null,
+        recordedAt: createdAt,
+        origin: "model_reported",
+        revision: 1,
+        processedRevision: 0,
+        ...(input.role === "assistant"
+          ? { assistantStage: input.assistantStage ?? "unknown" }
+          : {}),
+        raw: {
+          origin: "model_reported",
+          receivedAt: createdAt,
+          assistantStage:
+            input.assistantStage ??
+            (input.role === "assistant" ? "unknown" : null),
+        },
+      };
+      this.db
+        .prepare(
+          "INSERT INTO chats VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json"
+        )
+        .run(chatId, canonical(chat));
+      this.db
+        .prepare("INSERT INTO message_versions VALUES (?, ?, ?)")
+        .run(sourceId, 1, canonical(message));
+      this.db
+        .prepare(
+          "INSERT INTO messages(id, chat_id, revision, processed_revision, json, fingerprint) VALUES (?, ?, 1, 0, ?, ?)"
+        )
+        .run(sourceId, chatId, canonical(message), digest(message));
+      const receipt = {
+        receiptId,
+        sourceId,
+        chatId,
+        origin: "model_reported" as const,
+        ...(message.assistantStage
+          ? { assistantStage: message.assistantStage }
+          : {}),
+      };
+      this.cacheRequest(key, input, receipt);
+      return { ...receipt, duplicate: false };
+    });
+  }
+
   getSource(id: string, revision?: number): SourceMessage | null {
     identifierSchema.parse(id);
     if (revision !== undefined) {
       revisionSchema.parse(revision);
       // 必须命中请求的历史版本，不能拿当前正文代替旧版证据。
-      return parseRow<SourceMessage>(
-        this.db
-          .prepare(
-            "SELECT json FROM message_versions WHERE id = ? AND revision = ?"
-          )
-          .get(id, revision)
-      );
+      const row = this.db
+        .prepare(`SELECT message_versions.json, messages.processed_revision
+          FROM message_versions JOIN messages ON messages.id = message_versions.id
+          WHERE message_versions.id = ? AND message_versions.revision = ?`)
+        .get(id, revision);
+      const message = parseRow<SourceMessage>(row);
+      return message
+        ? { ...message, processedRevision: Number(row?.processed_revision) }
+        : null;
     }
     const row = this.db
       .prepare("SELECT json, processed_revision FROM messages WHERE id = ?")
@@ -301,6 +411,8 @@ export class MemoryStore {
     ), chat_rows AS (
       SELECT chat_ids.id AS id,
         substr(COALESCE(
+          CASE WHEN json_type(chats.json, '$.raw.chat_summary.title') = 'text'
+            THEN NULLIF(json_extract(chats.json, '$.raw.chat_summary.title'), '') END,
           CASE WHEN json_type(chats.json, '$.raw.title') = 'text'
             THEN NULLIF(json_extract(chats.json, '$.raw.title'), '') END,
           CASE WHEN json_type(chats.json, '$.raw.name') = 'text'
@@ -325,11 +437,11 @@ export class MemoryStore {
         (SELECT COUNT(*) FROM messages WHERE chat_id = chat_rows.id) AS message_count,
         (SELECT COUNT(*) FROM messages WHERE chat_id = chat_rows.id
           AND processed_revision < revision) AS pending_count,
-        (SELECT MAX(json_extract(json, '$.createdAt')) FROM messages
+        (SELECT MAX(COALESCE(json_extract(json, '$.createdAt'), json_extract(json, '$.recordedAt'))) FROM messages
           WHERE chat_id = chat_rows.id) AS last_message_at,
         (SELECT substr(json_extract(json, '$.content'), 1, 200) FROM messages
           WHERE chat_id = chat_rows.id
-          ORDER BY json_extract(json, '$.createdAt') DESC, rowid DESC LIMIT 1) AS preview
+          ORDER BY COALESCE(json_extract(json, '$.createdAt'), json_extract(json, '$.recordedAt')) DESC, rowid DESC LIMIT 1) AS preview
         FROM chat_rows WHERE ${where}
         ORDER BY last_message_at DESC, chat_rows.id LIMIT ? OFFSET ?`)
       .all(...parameters, pageSize, offset)
@@ -364,7 +476,7 @@ export class MemoryStore {
     );
     const items = this.db
       .prepare(`SELECT json, processed_revision FROM messages WHERE ${where}
-        ORDER BY json_extract(json, '$.createdAt') DESC, rowid DESC LIMIT ? OFFSET ?`)
+        ORDER BY COALESCE(json_extract(json, '$.createdAt'), json_extract(json, '$.recordedAt')) DESC, rowid DESC LIMIT ? OFFSET ?`)
       .all(...parameters, pageSize, offset)
       .map((row) =>
         sourceView({
@@ -495,11 +607,14 @@ export class MemoryStore {
   }
 
   listMemories(
-    options: PageOptions & { status?: Admin.MemoryListStatus } = {}
+    options: PageOptions & {
+      status?: Admin.MemoryListStatus;
+      category?: "user_profile" | "situational";
+    } = {}
   ): Admin.MemoryPage<MemoryRecord> {
     const { query, page, pageSize, offset } = pagination(options);
     const status = z
-      .enum(["all", "active", "candidate", "inactive"])
+      .enum(["all", "active", "candidate", "inactive", "current"])
       .default("all")
       .parse(options.status);
     const now = new Date().toISOString();
@@ -514,8 +629,12 @@ export class MemoryStore {
       ), lower(?)) > 0)`,
     ];
     const parameters: Array<string | number> = [query, query];
-    if (status === "active") {
-      filters.push(current);
+    if (status === "active" || status === "current") {
+      filters.push(
+        status === "current"
+          ? `(${current} OR json_extract(json, '$.status') = 'candidate')`
+          : current
+      );
       parameters.push(now, now);
     } else if (status === "candidate") {
       filters.push("json_extract(json, '$.status') = 'candidate'");
@@ -526,6 +645,24 @@ export class MemoryStore {
       parameters.push(now, now);
     }
     const where = filters.join(" AND ");
+    const category = z
+      .enum(["user_profile", "situational"])
+      .optional()
+      .parse(options.category);
+    if (category) {
+      const matching = this.db
+        .prepare(`SELECT json FROM memories WHERE ${where}
+        ORDER BY json_extract(json, '$.observedAt') DESC, id`)
+        .all(...parameters)
+        .map((row) => parseRow<MemoryRecord>(row) as MemoryRecord)
+        .filter((memory) => getMemoryCategory(memory) === category);
+      return {
+        items: matching.slice(offset, offset + pageSize),
+        page,
+        pageSize,
+        total: matching.length,
+      };
+    }
     const total = Number(
       this.db
         .prepare(`SELECT COUNT(*) AS count FROM memories WHERE ${where}`)
@@ -588,6 +725,7 @@ export class MemoryStore {
       scope?: string;
       includeCandidates?: boolean;
       includeHistory?: boolean;
+      category?: "user_profile" | "situational";
       limit?: number;
     } = {}
   ): MemoryRecord[] {
@@ -599,6 +737,8 @@ export class MemoryStore {
     return this.allMemories()
       .filter((memory) => {
         if (options.scope && memory.scope !== options.scope) return false;
+        if (options.category && getMemoryCategory(memory) !== options.category)
+          return false;
         if (
           !this.isCurrent(memory) &&
           !(options.includeCandidates && memory.status === "candidate") &&
@@ -717,6 +857,8 @@ export class MemoryStore {
       .prepare("SELECT * FROM requests WHERE id = ?")
       .get(requestId);
     if (!row) return null;
+    if (row.json === '{"deleted":true}')
+      throw new MemoryError("该请求涉及已删除记忆，不能重试恢复。");
     if (row.fingerprint !== digest(input))
       throw new MemoryError("请求标识已用于不同内容，请创建新的请求标识");
     return parseRow<T>(row);
@@ -1154,6 +1296,52 @@ export class MemoryStore {
         canUndo,
         memoryIds: operation.snapshots.map((snapshot) => snapshot.id),
       };
+    });
+  }
+
+  deleteMemory(id: string, revision: number): { deleted: true; id: string } {
+    identifierSchema.parse(id);
+    revisionSchema.parse(revision);
+    return this.transaction(() => {
+      const memory = this.getMemory(id);
+      if (!memory) throw new MemoryError("记忆不存在或已删除。");
+      if (memory.revision !== revision)
+        throw new MemoryError("目标记忆版本已改变，请刷新后重试。");
+      const summaries = this.db
+        .prepare(
+          "SELECT DISTINCT summary_id FROM summary_sources WHERE memory_id = ?"
+        )
+        .all(id)
+        .map((row) => String(row.summary_id));
+      for (const summaryId of summaries) {
+        this.db
+          .prepare("DELETE FROM summary_sources WHERE summary_id = ?")
+          .run(summaryId);
+        this.db.prepare("DELETE FROM summaries WHERE id = ?").run(summaryId);
+      }
+      this.db.prepare("DELETE FROM memory_sources WHERE memory_id = ?").run(id);
+      this.db.prepare("DELETE FROM memory_versions WHERE id = ?").run(id);
+      this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+      this.db
+        .prepare("DELETE FROM operations WHERE instr(json, ?) > 0")
+        .run(id);
+      for (const target of [id, ...summaries]) {
+        this.db
+          .prepare("UPDATE requests SET json = ? WHERE instr(json, ?) > 0")
+          .run('{"deleted":true}', target);
+      }
+      const operationId = randomUUID();
+      this.db.prepare("INSERT INTO operations VALUES (?, ?)").run(
+        operationId,
+        canonical({
+          id: operationId,
+          kind: "delete",
+          targetId: id,
+          createdAt: new Date().toISOString(),
+          snapshots: [],
+        })
+      );
+      return { deleted: true, id };
     });
   }
 

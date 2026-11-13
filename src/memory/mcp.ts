@@ -1,6 +1,9 @@
+import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+// biome-ignore lint/nursery/useImportRestrictions: 前后端共享纯展示分类，避免聚合入口的运行时依赖。
+import { getMemoryCategory } from "../types/memory-display.js";
 import {
   CANDIDATE_WARNING,
   MEMORY_EXTRACTION_RULES,
@@ -13,10 +16,14 @@ import {
   type MemoryRecord,
   type SourceMessage,
   memoryProposalSchema,
+  recordTurnSchema,
   summaryProposalSchema,
 } from "./types.js";
 
 const MAX_RESPONSE_CHARS = 32_000;
+const MAX_RESULT_BYTES = 768;
+const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const SNAPSHOT_TTL_MS = 120_000;
 const identifierSchema = z.string().min(1).max(200);
 const emptySchema = z.object({}).strict();
 
@@ -33,17 +40,6 @@ export function safeMemoryError(error: unknown): string {
 
 function result(value: unknown, isError = false): CallToolResult {
   const text = JSON.stringify(value);
-  if (text.length > MAX_RESPONSE_CHARS) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text: "结果超过单次读取上限，请减少 limit 或使用更精确的关键词后重试。",
-        },
-      ],
-    };
-  }
   return { content: [{ type: "text", text }], ...(isError ? { isError } : {}) };
 }
 
@@ -68,31 +64,18 @@ function jsonPrefix(text: string, budget: number): string {
   return prefix(text, lower);
 }
 
-function memoryView(memory: MemoryRecord) {
+function memoryView(store: MemoryStore, memory: MemoryRecord) {
   return {
     ...memory,
-    reason: prefix(memory.reason, 400),
-    reasonTruncated: memory.reason.length > 400,
-    sources: memory.sources.slice(0, 3).map((source) => ({
+    category: getMemoryCategory(memory),
+    sources: memory.sources.map((source) => ({
       ...source,
-      quote: prefix(source.quote, 500),
-      quoteTruncated: source.quote.length > 500,
+      origin:
+        store.getSource(source.messageId, source.revision)?.origin ?? "archive",
     })),
     sourceCount: memory.sources.length,
-    omittedSources: Math.max(0, memory.sources.length - 3),
+    omittedSources: 0,
   };
-}
-
-function fitItems<T>(items: T[], budget: number): T[] {
-  const included: T[] = [];
-  let used = 2;
-  for (const item of items) {
-    const length = JSON.stringify(item).length + 1;
-    if (used + length > budget) break;
-    included.push(item);
-    used += length;
-  }
-  return included;
 }
 
 function sourceView(
@@ -116,6 +99,9 @@ function sourceView(
     role: source.role,
     createdAt: source.createdAt,
     processedRevision: source.processedRevision,
+    origin: source.origin ?? "archive",
+    ...(source.assistantStage ? { assistantStage: source.assistantStage } : {}),
+    ...(source.recordedAt ? { recordedAt: source.recordedAt } : {}),
     content,
     contentOffset: offset,
     contentLength: source.content.length,
@@ -167,16 +153,166 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     { name: "xiaozhi-local-memory", version: "1.0.0" },
     { instructions: MEMORY_SERVER_INSTRUCTIONS }
   );
+  // SDK 会在调用处理器前生成参数错误，统一收敛以避免超长错误及参数泄露。
+  const connect = server.connect.bind(server);
+  server.connect = async (transport) => {
+    const send = transport.send.bind(transport);
+    transport.send = async (message, options) => {
+      if (
+        "result" in message &&
+        message.result &&
+        typeof message.result === "object"
+      ) {
+        const value = message.result as Record<string, unknown>;
+        if (
+          value.isError === true &&
+          (Buffer.byteLength(JSON.stringify(value), "utf8") >
+            MAX_RESULT_BYTES ||
+            JSON.stringify(value).includes("Input validation error:"))
+        ) {
+          return send(
+            {
+              ...message,
+              result: result(
+                { error: "参数格式无效，请检查工具字段和长度。" },
+                true
+              ),
+            },
+            options
+          );
+        }
+      }
+      return send(message, options);
+    };
+    await connect(transport);
+  };
+  let snapshot:
+    | {
+        cursor: string;
+        text: string;
+        hash: string;
+        version: number;
+        expires: number;
+        offsets: Map<number, number>;
+      }
+    | undefined;
+  const segment = (offset: number): CallToolResult => {
+    if (
+      !snapshot ||
+      Date.now() > snapshot.expires ||
+      snapshot.version !== store.dataVersion() ||
+      !snapshot.offsets.has(offset)
+    ) {
+      snapshot = undefined;
+      throw new MemoryError(
+        "续读结果已失效或位置无效，请重新调用原工具；写入重试保持原 requestId 和参数。"
+      );
+    }
+    const current = snapshot;
+    const build = (end: number) =>
+      result({
+        segmented: true,
+        cursor: current.cursor,
+        offset,
+        nextOffset: end < current.text.length ? end : null,
+        totalLength: current.text.length,
+        sha256: current.hash,
+        chunk: current.text.slice(offset, end),
+      });
+    let low = offset;
+    let high = current.text.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (
+        Buffer.byteLength(JSON.stringify(build(mid)), "utf8") <=
+        MAX_RESULT_BYTES
+      )
+        low = mid;
+      else high = mid - 1;
+    }
+    let end = low;
+    if (
+      end < current.text.length &&
+      /[\uD800-\uDBFF]/u.test(current.text.charAt(end - 1))
+    )
+      end--;
+    if (end <= offset)
+      throw new MemoryError("结果分段失败，请重新调用原工具。");
+    const existing = current.offsets.get(offset);
+    if (existing !== -1 && existing !== end)
+      throw new MemoryError("结果分段位置不一致，请重新调用原工具。");
+    current.offsets.set(offset, end);
+    if (end < current.text.length && !current.offsets.has(end))
+      current.offsets.set(end, -1);
+    current.expires = Date.now() + SNAPSHOT_TTL_MS;
+    return build(end);
+  };
   const run = (work: () => unknown): CallToolResult => {
     try {
+      snapshot = undefined;
       guard();
-      return result(work());
+      const value = work();
+      const response = result(value);
+      if (
+        Buffer.byteLength(JSON.stringify(response), "utf8") <= MAX_RESULT_BYTES
+      )
+        return response;
+      const text = JSON.stringify(value);
+      if (Buffer.byteLength(text, "utf8") > MAX_SNAPSHOT_BYTES)
+        throw new MemoryError("结果超过可续读上限，请缩小查询范围后重试。");
+      snapshot = {
+        cursor: randomUUID(),
+        text,
+        hash: createHash("sha256").update(text, "utf8").digest("hex"),
+        version: store.dataVersion(),
+        expires: Date.now() + SNAPSHOT_TTL_MS,
+        offsets: new Map([[0, -1]]),
+      };
+      return segment(0);
     } catch (error) {
       return result({ error: safeMemoryError(error) }, true);
     }
   };
   const readOnly = { readOnlyHint: true, openWorldHint: false };
   const write = { readOnlyHint: false, openWorldHint: false };
+
+  server.registerTool(
+    "memory_read_result",
+    {
+      title: "继续读取工具结果",
+      description:
+        "任何工具返回 segmented=true 时，先按 cursor 和 nextOffset 连续调用本工具；按 offset 拼接 chunk，直到 nextOffset 为 null，校验 totalLength（UTF-16）和 sha256（UTF-8），再解析完整 JSON。中途不要调用其他工具；失效时重试原工具，写入沿用同一 requestId 和全部参数。聚合工具名前缀以列表为准。完成传输后，原文自身 nextOffset 仍须用 memory_read_source 逐段读取。",
+      inputSchema: z
+        .object({
+          cursor: z.string().uuid(),
+          offset: z.number().int().min(0).max(MAX_SNAPSHOT_BYTES),
+        })
+        .strict(),
+      annotations: readOnly,
+    },
+    ({ cursor, offset }) => {
+      try {
+        guard();
+        if (!snapshot || cursor !== snapshot.cursor)
+          throw new MemoryError("续读游标无效或已失效，请重新调用原工具。");
+        return segment(offset);
+      } catch (error) {
+        return result({ error: safeMemoryError(error) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    "memory_record_turn",
+    {
+      title: "记录模型自报对话片段",
+      description:
+        "逐条提交用户、助手或工具的原样文本。每次最多8000个UTF-16单元；超长按顺序分段，每段使用不同requestId。重试相同片段使用完全相同参数。记录是模型自报，并非官方原文；不能提交智能体、端点或官方来源ID。",
+      inputSchema: recordTurnSchema,
+      annotations: { ...write, destructiveHint: false, idempotentHint: true },
+    },
+    (input) => run(() => store.recordTurn(input))
+  );
 
   server.registerTool(
     "memory_status",
@@ -195,7 +331,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     {
       title: "读取待提炼原文",
       description:
-        "默认读取尚未处理的真实消息及其版本，并给出同作用域旧记忆与提炼规则。afterId使用上次的nextCursor；原文过长会标明截断，需继续用memory_read_source读取。",
+        "默认读取尚未处理的已保存消息、来源标识及其版本，并给出同作用域旧记忆与提炼规则。afterId使用上次的nextCursor；原文过长会标明截断，需继续用memory_read_source读取。",
       inputSchema: z
         .object({
           chatId: identifierSchema
@@ -238,7 +374,9 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         const related = scopes.flatMap((scope) =>
           store.searchMemories({ scope, limit: 3 })
         );
-        const relatedMemories = fitItems(related.map(memoryView), 6_500);
+        const relatedMemories = related.map((memory) =>
+          memoryView(store, memory)
+        );
         return {
           rules: MEMORY_EXTRACTION_RULES,
           messages,
@@ -299,10 +437,11 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     {
       title: "检索本地记忆",
       description:
-        "按短关键词检索本库记忆，默认只返回有效正式条目。includeCandidates还会返回最近的未验证暂存provisionalCaptures，只供复核，不能作为来源。limit限制两个列表的总条数。候选和历史需按各自status理解；不同scope不能默认当作同一个说话人。返回的证据片段可能截断，可按messageId读取原文。",
+        "按短关键词及可选本地category检索本库记忆，默认只返回有效正式条目。includeCandidates还会返回最近的未验证暂存provisionalCaptures，只供复核，不能作为来源；指定category时不返回没有分类的暂存候选。limit限制两个列表的总条数。候选和历史需按各自status理解；不同scope不能默认当作同一个说话人。返回的证据片段可能截断，可按messageId读取原文。",
       inputSchema: z
         .object({
           query: z.string().trim().max(200).optional(),
+          category: z.enum(["user_profile", "situational"]).optional(),
           includeCandidates: z.boolean().default(false),
           includeHistory: z.boolean().default(false),
           limit: z.number().int().min(1).max(20).default(5),
@@ -321,14 +460,16 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           .toLocaleLowerCase()
           .split(/\s+/u)
           .filter(Boolean);
-        const captureMatches = args.includeCandidates
-          ? store.listCaptures().filter((capture) => {
-              const searchable = `${capture.text ?? ""} ${capture.reason ?? ""}`
-                .normalize("NFKC")
-                .toLocaleLowerCase();
-              return terms.every((term) => searchable.includes(term));
-            })
-          : [];
+        const captureMatches =
+          args.includeCandidates && !args.category
+            ? store.listCaptures().filter((capture) => {
+                const searchable =
+                  `${capture.text ?? ""} ${capture.reason ?? ""}`
+                    .normalize("NFKC")
+                    .toLocaleLowerCase();
+                return terms.every((term) => searchable.includes(term));
+              })
+            : [];
         // 显式复核候选时，为两个列表分配名额；总条数和序列化体积共同受限。
         const captureSlots = captureMatches.length
           ? Math.max(
@@ -336,23 +477,19 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
               args.limit - Math.min(matches.length, Math.ceil(args.limit / 2))
             )
           : 0;
-        const provisionalCaptures = fitItems(
-          captureMatches.slice(0, captureSlots).map((capture) => ({
+        const provisionalCaptures = captureMatches
+          .slice(0, captureSlots)
+          .map((capture) => ({
             id: capture.id,
             text: capture.text,
             reason: capture.reason,
             createdAt: capture.createdAt,
             status: "unverified",
             warning: CANDIDATE_WARNING,
-          })),
-          20_000
-        );
-        const memories = fitItems(
-          matches
-            .slice(0, args.limit - provisionalCaptures.length)
-            .map(memoryView),
-          28_000 - JSON.stringify(provisionalCaptures).length
-        );
+          }));
+        const memories = matches
+          .slice(0, args.limit - provisionalCaptures.length)
+          .map((memory) => memoryView(store, memory));
         return {
           memories,
           ...(args.includeCandidates ? { provisionalCaptures } : {}),
@@ -376,7 +513,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     (proposal) =>
       run(() => {
         const committed = store.submit(proposal);
-        return { ...committed, memory: memoryView(committed.memory) };
+        return { ...committed, memory: memoryView(store, committed.memory) };
       })
   );
 
@@ -441,7 +578,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
             (summary) =>
               !query || `${summary.title}\n${summary.text}`.includes(query)
           );
-        const summaries = fitItems(matches.slice(0, limit), 28_000);
+        const summaries = matches.slice(0, limit);
         return { summaries, hasMore: matches.length > summaries.length };
       })
   );

@@ -84,6 +84,128 @@ describe("本机记忆管理查询与审计", () => {
     };
   }
 
+  it("永久删除仅目标记忆、版本和派生概要，并拒绝旧请求与撤销恢复", async () => {
+    const message = source();
+    const input = proposal(message, {
+      facet: "待删除属性",
+      value: "独有提炼正文",
+    });
+    const saved = store.submit(input);
+    const other = store.submit(
+      proposal(message, { facet: "保留属性", value: "保留记忆" })
+    );
+    const summaryInput = {
+      requestId: "delete-summary-request",
+      title: "目标摘要",
+      text: "独有派生正文",
+      memories: [{ id: saved.memory.id, revision: 1 }],
+    };
+    const summary = store.saveSummary(summaryInput);
+    const otherSummary = store.saveSummary({
+      requestId: "keep-summary-request",
+      title: "保留摘要",
+      text: "保留派生",
+      memories: [{ id: other.memory.id, revision: 1 }],
+    });
+    const reinforced = store.retire(saved.memory.id, 1, "测试停用");
+    expect(reinforced.memory.revision).toBe(2);
+    const priorBackup = join(directory, "before-delete.sqlite");
+    store.backup(priorBackup);
+    const before = store.exportData();
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "delete", id: saved.memory.id, revision: 1 },
+        options
+      )
+    ).toMatchObject({ success: false });
+    expect(store.exportData().memoryVersions).toEqual(before.memoryVersions);
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "delete", id: saved.memory.id, revision: 2 },
+        options
+      )
+    ).toMatchObject({
+      success: true,
+      data: { deleted: true, id: saved.memory.id },
+    });
+    expect(store.getMemory(saved.memory.id)).toBeNull();
+    expect(store.getSource(message.sourceId)?.content).toBe(message.content);
+    expect(store.getMemory(other.memory.id)).not.toBeNull();
+    expect(store.listAdminSummaries().map((item) => item.id)).toEqual([
+      otherSummary.id,
+    ]);
+    const exported = store.exportData();
+    expect(JSON.stringify(exported.memoryVersions)).not.toContain(
+      "独有提炼正文"
+    );
+    expect(JSON.stringify(exported.summaries)).not.toContain("独有派生正文");
+    expect(JSON.stringify(exported.operations)).not.toContain("独有提炼正文");
+    expect(exported.summaries).not.toContainEqual(summary);
+    expect(() => store.submit(input)).toThrow("已删除");
+    expect(() => store.saveSummary(summaryInput)).toThrow("已删除");
+    expect(() => store.undo(saved.operationId)).toThrow();
+    expect(() => store.undo(reinforced.operationId)).toThrow();
+    const oldBackup = new MemoryStore(priorBackup, options);
+    expect(oldBackup.getMemory(saved.memory.id)).not.toBeNull();
+    oldBackup.close();
+    const newBackup = join(directory, "after-delete.sqlite");
+    store.backup(newBackup);
+    const restored = new MemoryStore(newBackup, options);
+    expect(restored.getMemory(saved.memory.id)).toBeNull();
+    expect(() => restored.submit(input)).toThrow("已删除");
+    restored.close();
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "delete", id: saved.memory.id, revision: 2 },
+        options
+      )
+    ).toMatchObject({ success: false });
+  });
+
+  it("指定来源版本读取时返回当前审阅进度和该版本原文", async () => {
+    const message = source();
+    store.finishSources(
+      [{ messageId: message.sourceId, revision: 1 }],
+      "已阅读"
+    );
+    const result = await executeAdminRequest(
+      store,
+      { action: "source", id: message.sourceId, revision: 1 },
+      options
+    );
+    expect(result).toMatchObject({
+      success: true,
+      data: { content: message.content, revision: 1, processedRevision: 1 },
+    });
+  });
+
+  it("读取官方会话摘要标题并支持标题搜索，异常摘要回退到已有标题", () => {
+    store.upsertChat({
+      id: "official-chat",
+      raw: { chat_summary: { title: "官方合成标题" } },
+    });
+    store.upsertChat({
+      id: "fallback-chat",
+      raw: { chat_summary: { title: 123 }, title: "导入标题" },
+    });
+    store.upsertChat({
+      id: "empty-chat",
+      raw: { chat_summary: { title: "" }, name: "会话名称" },
+    });
+    expect(store.listChats({ query: "官方合成" }).items).toMatchObject([
+      { id: "official-chat", title: "官方合成标题" },
+    ]);
+    expect(store.listChats({ query: "导入标题" }).items[0].title).toBe(
+      "导入标题"
+    );
+    expect(store.listChats({ query: "会话名称" }).items[0].title).toBe(
+      "会话名称"
+    );
+  });
+
   it("会话与消息分页覆盖首批以后的记录，查询把百分号和下划线当作原文", () => {
     const messages: ArchiveMessage[] = [];
     for (let index = 0; index < 57; index++) {
@@ -185,6 +307,7 @@ describe("本机记忆管理查询与审计", () => {
       store.listMemories({ status: "candidate" }).items.map((item) => item.id)
     ).toEqual([candidate.id]);
     expect(store.listMemories({ status: "active" }).total).toBe(54);
+    expect(store.listMemories({ status: "current" }).total).toBe(55);
     expect(
       store
         .listMemories({ status: "inactive" })
@@ -195,6 +318,49 @@ describe("本机记忆管理查询与审计", () => {
     expect(store.listMemories({ query: "%_" }).items[0].value).toBe(
       "含100%_字面值"
     );
+  });
+
+  it("分类先过滤再分页统计，并通过管理协议透传", async () => {
+    const message = source();
+    for (let index = 0; index < 3; index++) {
+      store.submit(
+        proposal(message, {
+          facet: `画像${index}`,
+          conditions: "",
+          value: `值${index}`,
+        })
+      );
+    }
+    store.submit(proposal(message, { facet: "情境", conditions: "夜间" }));
+    const first = store.listMemories({
+      status: "current",
+      category: "user_profile",
+      pageSize: 2,
+    });
+    const second = store.listMemories({
+      status: "current",
+      category: "user_profile",
+      pageSize: 2,
+      page: 2,
+    });
+    expect(first.total).toBe(3);
+    expect(first.items).toHaveLength(2);
+    expect(second).toMatchObject({ total: 3, items: [expect.any(Object)] });
+    expect(
+      new Set([...first.items, ...second.items].map((item) => item.id)).size
+    ).toBe(3);
+    expect(
+      await executeAdminRequest(
+        store,
+        {
+          action: "memories",
+          status: "current",
+          category: "situational",
+          pageSize: 2,
+        },
+        options
+      )
+    ).toMatchObject({ success: true, data: { total: 1 } });
   });
 
   it("拒绝非法页码和页大小，越过末页返回空列表和真实总数", () => {

@@ -49,12 +49,15 @@ import {
   MemoryEmpty,
   MemoryErrorState,
   MemoryLoading,
+  MemorySourceBadge,
   MemoryStatusBadge,
   assertionLabels,
+  formatMemorySourceTime,
   formatMemoryTime,
   roleLabel,
   subjectLabel,
 } from "./memory-common";
+import { MemoryDelete } from "./memory-delete";
 
 export interface MemorySelection {
   id: string;
@@ -86,7 +89,10 @@ function SourceEvidence({ source }: { source: Evidence }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline">引用版本 {source.revision}</Badge>
         {message ? (
-          <Badge variant="secondary">{roleLabel(message.role)}</Badge>
+          <>
+            <Badge variant="secondary">{roleLabel(message.role)}</Badge>
+            <MemorySourceBadge message={message} />
+          </>
         ) : null}
         {changed ? (
           <Badge variant="outline">
@@ -125,8 +131,8 @@ function SourceEvidence({ source }: { source: Evidence }) {
         ) : message ? (
           <div className="flex flex-col gap-2 rounded-md bg-muted p-3">
             <p className="text-xs text-muted-foreground">
-              {roleLabel(message.role)} · {formatMemoryTime(message.createdAt)}{" "}
-              · 版本 {message.revision}
+              {roleLabel(message.role)} · {formatMemorySourceTime(message)} ·
+              版本 {message.revision}
             </p>
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
               {message.content}
@@ -358,8 +364,7 @@ export function MemoryDetailSheet({
                     原话依据（{sources.length}）
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    每条引用都绑定消息 ID
-                    和具体版本，下面保留整理时引用的精确原话。
+                    引用绑定已保存的消息和版本，来源类型随消息标明。
                   </p>
                   {sources.length ? (
                     sources.map((source, index) => (
@@ -395,6 +400,18 @@ export function MemoryDetailSheet({
                 ) : null}
               </>
             )}
+            <div className="flex items-center justify-between gap-3 border-t pt-3">
+              <p className="text-xs text-muted-foreground">
+                需要彻底移除时，可删除该记忆及历史版本。
+              </p>
+              <MemoryDelete
+                memory={data.memory}
+                onDeleted={() => {
+                  onChanged();
+                  onClose();
+                }}
+              />
+            </div>
           </>
         )}
         <AlertDialog

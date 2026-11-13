@@ -5,7 +5,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -35,15 +34,22 @@ import {
   formatMemoryTime,
   subjectLabel,
 } from "./memory-common";
+import { MemoryDelete } from "./memory-delete";
 import type { MemorySelection } from "./memory-detail";
+import { MemoryRetire } from "./memory-retire";
 
 export function MemoryEntries({
   revision,
   onSelect,
-}: { revision: number; onSelect: (selection: MemorySelection) => void }) {
+  onChanged,
+}: {
+  revision: number;
+  onSelect: (selection: MemorySelection) => void;
+  onChanged?: () => void;
+}) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<MemoryListStatus>("active");
+  const [status, setStatus] = useState<MemoryListStatus>("all");
   const [page, setPage] = useState(1);
   const load = useCallback(
     (signal: AbortSignal) =>
@@ -62,15 +68,21 @@ export function MemoryEntries({
     setPage(1);
     setQuery(search.trim());
   }
+  function changed() {
+    entries.refresh();
+    onChanged?.();
+  }
 
   return (
     <div className="flex flex-col gap-5">
       <form
         onSubmit={searchEntries}
-        className="flex flex-col gap-3 sm:flex-row sm:items-end"
+        className="grid grid-cols-2 gap-3 sm:flex sm:items-end"
       >
-        <div className="flex flex-1 flex-col gap-2">
-          <Label htmlFor="memory-search">搜索记忆</Label>
+        <div className="col-span-2 flex min-w-0 flex-1 flex-col gap-2">
+          <Label className="sr-only" htmlFor="memory-search">
+            搜索记忆
+          </Label>
           <Input
             id="memory-search"
             value={search}
@@ -80,7 +92,9 @@ export function MemoryEntries({
           />
         </div>
         <div className="flex flex-col gap-2 sm:w-40">
-          <Label htmlFor="memory-status">记忆状态</Label>
+          <Label className="sr-only" htmlFor="memory-status">
+            记忆状态
+          </Label>
           <Select
             value={status}
             onValueChange={(value) => {
@@ -132,35 +146,29 @@ export function MemoryEntries({
       ) : entries.error ? (
         <MemoryErrorState message={entries.error} retry={entries.refresh} />
       ) : entries.data?.items.length ? (
-        <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <div className="memory-list" aria-label="记忆列表">
           {entries.data.items.map((memory) => (
-            <Card key={memory.id} className="flex min-w-0 flex-col">
-              <CardHeader>
-                <div className="flex flex-wrap gap-2">
-                  <MemoryStatusBadge status={memory.status} />
-                  <Badge variant="outline">
-                    {assertionLabels[memory.assertion]}
-                  </Badge>
-                </div>
-                <CardTitle>{memory.facet}</CardTitle>
-                <CardDescription>
-                  {subjectLabel(memory.subject)}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-1 flex-col gap-3">
-                <p className="line-clamp-4 whitespace-pre-wrap break-words text-sm leading-relaxed">
+            <article key={memory.id} className="memory-row">
+              <div className="memory-row-facet">
+                <Badge variant="outline">{memory.facet}</Badge>
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm font-medium leading-relaxed">
                   {memory.value}
                 </p>
                 {memory.conditions ? (
-                  <p className="line-clamp-2 break-words text-sm text-muted-foreground">
+                  <p className="line-clamp-2 break-words text-xs text-muted-foreground">
                     适用条件：{memory.conditions}
                   </p>
                 ) : null}
-              </CardContent>
-              <CardFooter className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  {memory.sources.length} 条原话依据 · 版本 {memory.revision}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {subjectLabel(memory.subject)} · {memory.sources.length}{" "}
+                  条原话依据 · 版本 {memory.revision} ·{" "}
+                  {assertionLabels[memory.assertion]}
                 </p>
+              </div>
+              <div className="memory-row-actions">
+                <MemoryStatusBadge status={memory.status} />
                 <Button
                   variant="outline"
                   size="sm"
@@ -168,17 +176,27 @@ export function MemoryEntries({
                 >
                   查看详情
                 </Button>
-              </CardFooter>
-            </Card>
+                <MemoryRetire memory={memory} onRetired={changed} />
+                <MemoryDelete memory={memory} compact onDeleted={changed} />
+              </div>
+            </article>
           ))}
         </div>
       ) : (
         <MemoryEmpty
-          title={query ? "没有找到匹配的记忆" : "这里还没有记忆"}
+          title={
+            query
+              ? "没有找到匹配的记忆"
+              : page > 1
+                ? "本页已无记忆"
+                : "此状态下暂无记忆"
+          }
           description={
             query
               ? "试试其他关键词，或清除搜索、切换状态。"
-              : "先同步对话，再把“整理提示”粘贴到小智聊天中，使用当前模型整理有原话依据的记忆。"
+              : page > 1
+                ? "记录已变化，请返回上一页查看。"
+                : "可切换记忆状态查看其他条目。"
           }
         />
       )}

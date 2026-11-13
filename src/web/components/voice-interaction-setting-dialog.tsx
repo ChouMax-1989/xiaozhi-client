@@ -281,8 +281,9 @@ export function VoiceInteractionSettingDialog() {
     <>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button variant="secondary" size="icon" className="size-8">
+          <Button variant="outline" size="sm">
             <SettingsIcon className="size-4" />
+            语音设置
           </Button>
         </DialogTrigger>
         <DialogContent className="sm:max-w-[600px]">

@@ -6,15 +6,25 @@ export const MEMORY_EXTRACTION_RULES = `你正在为当前本地记忆库整理�
 4. 保留否定、数量、时间和条件。例如“白天26度、晚上24度”是两个条件；“今天调到24度”是一次事件，不自动成为永久偏好；“准备买”属于计划，不能写成已经拥有。
 5. 区分说话人和相关人物。“我妻子喜欢辣”属于 related_person，名称保留“妻子”，不能改成说话人偏好。未知说话人只属于所在会话；不可用名字猜测或合并跨会话身份。
 6. 助手建议、工具结果和模型推断都不代表用户确认。推断使用 inferred，计划使用 plan，单次事件使用 event；不清楚或无可靠来源的内容只调用 memory_capture_candidate 暂存。暂存内容不是真实来源，不得用其ID自证。
-7. 正式记忆表示“用户明确这样说过”，不代表外部事实已经核实。reported 保留转述归属。不得为了凑引文，将同一句话解释成没有表达过的另一个意思。
+7. origin 为 model_reported 只证明模型提交过该内容，不是官方历史原文；接收时间不等于发言时间。基于它提炼时必须保留来源及未验证性质，不能称为官方核实。正式记忆不代表外部事实已经核实。reported 保留转述归属。不得为了凑引文，将同一句话解释成没有表达过的另一个意思。
 8. 新增用 add。已有同义条目时先比较主体、属性、条件和有效时间；只补充证据用 reinforce。只有原文明确纠正同一条件下的旧说法，才使用 replace，并提供 targetId、最新 targetRevision 和 correctionQuote。相似不等于重复，晚到旧历史不能覆盖较新状态，无法判断的冲突保留为候选。
 9. 每次提交使用稳定且唯一的 requestId（至少8个字符）；网络重试沿用同一个ID和完全相同内容，不同内容必须换ID。每个来源和目标版本必须与当前读到的版本一致。
 10. 返回值中的 truncated、nextOffset 或 quoteTruncated 表示只显示片段。使用 memory_read_source 继续读完整上下文；不能以未显示的文字或上下文缺失作证，也不能在未读完时声称已完成整条来源的处理。
 11. 保存完有效记忆，或确认没有可提炼内容后，再使用 memory_finish_sources 标记已审阅的来源版本并说明理由。不要因暂时没读完、检索失败或截断就标记完成。
-12. 概要只能概括当前有效的正式记忆，保留主体、否定、条件和时间，引用每条记忆ID与最新revision。不要把候选、原始工具输出或已经失效的概要写成当前事实。`;
+12. 概要只能概括当前有效的正式记忆，保留主体、否定、条件和时间，引用每条记忆ID与最新revision。不要把候选、原始工具输出或已经失效的概要写成当前事实。
+13. 本地展示分为用户画像和情境记忆，并非官方注册字段。画像 facet 推荐 preferred_name、age、communication_style、ai_interaction_preference、personality_traits、interests、relationships、routines；情境推荐 recent_event、plan、context_preference。保留已有自定义 facet，不为分类改写事实。
+14. 工具结果 segmented=true 时先用 memory_read_result 按 nextOffset 完成传输续读，拼接 chunk 校验后解析 JSON；再按原文自身 nextOffset 使用 memory_read_source。工具名前缀以实际列表为准。`;
 
-export const MEMORY_SERVER_INSTRUCTIONS =
-  "这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型无权导入原始档案、访问本机路径、读取凭据、同步远端或撤销历史。";
+export const MEMORY_RECORDING_RULES = `【本地记忆规则：追加在原有人设后】
+1. 开局用 memory_search(includeCandidates:true) 读取与当前话题相关的记忆；候选只能作未验证参考，不能当作已确认事实。工具名以实际列表为准，可能带 memory__ 前缀；没有对应工具时如实说明，不假装调用成功。
+2. 每轮用 memory_record_turn 逐条记录实际掌握的用户原话、助手回复和相关工具文本，role 分别为 user、assistant、tool。不摘要、不补写、不猜测缺失内容；记录服务自身的调用和回执不递归记录。只有收到成功回执才能说已保存，失败或遗漏要如实说明。
+3. 同一次对话保持同一 conversationId，新对话生成新ID，不跨会话复用；首条用 conversationTitle 给出简短标题（最多100字符）。每条使用唯一 requestId（8至128字符）；重试沿用相同ID及完全相同参数。每次只提交一条角色文本，超出8000个UTF-16单元时按原顺序分段，每段独立ID，保留空白和换行，不拆开表情字符。
+4. 助手尚未发出的拟回复标 assistantStage:draft；只有已知最终回复时标 final，不确定时标 unknown。不能把拟回复称为用户实际听到的内容。记录属于 model_reported，是模型提交的文本，不是官方完整日志；不能补写模型看不到的消息。
+5. 返回 segmented:true 时，保留首段 chunk，使用同一 cursor 和返回的 nextOffset 调 memory_read_result（参数名 offset），依次拼接到 nextOffset:null。期间不要调用其他记忆工具。核对 cursor、总长、sha256 一致且偏移连续，再解析完整JSON；totalLength按UTF-16单元计算，有计算能力时校验UTF-8的SHA-256，不得虚称已计算。原文自身 nextOffset 是另一层分页，要再用 memory_read_source 携带原messageId、revision继续读完。游标失效时重读原工具；写入重试仍保持原requestId及参数。
+6. 有长期价值的内容，在记录后用 memory_read_sources 读取待处理原文及完整提炼规则，必要时 memory_read_source 续读，再检索旧记忆、用 memory_submit 保存。保留人物、否定、条件和时间，引用真实sourceId、revision及逐字原话；不确定的内容保留候选。只有完整读完并处理后才 memory_finish_sources，概要只引用有效正式记忆。
+7. category 是本地分类：user_profile 为人物稳定信息，situational 为事件、计划、条件或实体信息。facet 推荐 preferred_name、age、communication_style、ai_interaction_preference、personality_traits、interests、relationships、routines、recent_event、plan、context_preference；保留已有自定义名称，不为分类改写事实。`;
+
+export const MEMORY_SERVER_INSTRUCTIONS = `这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型不能导入官方档案、访问本机路径、读取凭据、同步远端或撤销历史。${MEMORY_RECORDING_RULES}`;
 
 export const TRUNCATED_SOURCE_WARNING =
   "这条原文仅显示片段。请按 nextOffset 调用 memory_read_source，保持同一 sourceId 和 revision；缺失的上下文不能作为证据，未读完不能标记整条来源已处理。";

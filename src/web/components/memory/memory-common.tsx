@@ -9,7 +9,10 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { MemoryRecord } from "../../../types/memory-admin";
+import type {
+  MemoryRecord,
+  MemorySourceView,
+} from "../../../types/memory-admin";
 
 export const PAGE_SIZE = 12;
 
@@ -48,6 +51,15 @@ export function formatMemoryTime(value: string | null | undefined) {
     : time.toLocaleString("zh-CN", { hour12: false });
 }
 
+export function formatMemorySourceTime(message: MemorySourceView) {
+  if (message.origin === "model_reported") {
+    return message.recordedAt
+      ? `记录于 ${formatMemoryTime(message.recordedAt)}`
+      : "未记录接收时间";
+  }
+  return formatMemoryTime(message.createdAt);
+}
+
 export function roleLabel(role: string) {
   const roles: Record<string, string> = {
     user: "用户",
@@ -58,6 +70,25 @@ export function roleLabel(role: string) {
   return roles[role] || role;
 }
 
+export function MemorySourceBadge({ message }: { message: MemorySourceView }) {
+  const modelReported = message.origin === "model_reported";
+  const assistant = modelReported && message.role === "assistant";
+  const stage =
+    message.assistantStage === "draft"
+      ? "拟回复"
+      : message.assistantStage === "final"
+        ? "最终回复"
+        : "阶段未注明";
+  return (
+    <Badge
+      variant="outline"
+      title={assistant ? "回复阶段由模型提交，不代表实际播放状态。" : undefined}
+    >
+      {modelReported ? `模型提交${assistant ? ` · ${stage}` : ""}` : "历史档案"}
+    </Badge>
+  );
+}
+
 export function MemoryStatusBadge({
   status,
 }: { status: MemoryRecord["status"] }) {
@@ -65,7 +96,7 @@ export function MemoryStatusBadge({
     <Badge
       variant={
         status === "active"
-          ? "default"
+          ? "secondary"
           : status === "candidate"
             ? "secondary"
             : "outline"

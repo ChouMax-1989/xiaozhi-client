@@ -5,7 +5,7 @@ export class MemoryError extends Error {
   override name = "MemoryError";
 }
 
-// 原始消息只允许同步器或本机导入器写入，不能由模型伪造。
+// 官方档案和模型自报采用独立命名空间。
 export interface ArchiveMessage {
   id: string;
   chatId: string;
@@ -21,10 +21,31 @@ export interface ArchiveChat {
 }
 
 export interface SourceMessage extends ArchiveMessage {
+  origin?: "archive" | "model_reported";
+  assistantStage?: "draft" | "final" | "unknown";
+  recordedAt?: string;
   sourceId: string;
   revision: number;
   processedRevision: number;
 }
+
+export const recordTurnSchema = z
+  .object({
+    requestId: z.string().min(8).max(128),
+    conversationId: z.string().min(1).max(128),
+    conversationTitle: z.string().trim().min(1).max(100).optional(),
+    role: z.enum(["user", "assistant", "tool"]),
+    content: z.string().min(1).max(8000),
+    assistantStage: z.enum(["draft", "final", "unknown"]).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.role === "assistant" || value.assistantStage === undefined,
+    {
+      message: "只有助手消息可以指定回复阶段。",
+    }
+  );
+export type RecordTurn = z.infer<typeof recordTurnSchema>;
 
 export interface ImportCounts {
   inserted: number;

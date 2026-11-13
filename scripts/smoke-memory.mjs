@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { readMemoryResult } from "./memory-smoke-helpers.mjs";
 
 // 使用合成对话验证实际构建产物；不连接官方服务，不调用聊天模型。
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,9 +39,20 @@ function cli(args) {
 async function call(name, args = {}) {
   const response = await client.callTool({ name, arguments: args });
   assert.notEqual(response.isError, true, `工具 ${name} 应调用成功`);
-  const content = response.content.find((item) => item.type === "text");
-  assert.ok(content);
-  return JSON.parse(content.text);
+  return readMemoryResult(
+    (arguments_) => client.callTool({ name: "memory_read_result", arguments: arguments_ }),
+    response
+  );
+}
+
+function admin(input) {
+  const response = spawnSync(runtime, ["--experimental-sqlite", join(root, "dist/memory/admin.js")], {
+    env, encoding: "utf8", timeout: 20_000, input: JSON.stringify(input),
+  });
+  assert.equal(response.status, 0, `管理操作 ${input.action} 应成功退出`);
+  const envelope = JSON.parse(response.stdout);
+  assert.equal(envelope.success, true);
+  return envelope.data;
 }
 
 try {
@@ -64,7 +76,7 @@ try {
   transport.stderr?.on("data", (chunk) => { diagnostics += String(chunk); });
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 9);
+  assert.equal(tools.tools.length, 11);
   const sources = await call("memory_read_sources");
   const source = sources.messages[0];
   assert.equal(source.content, content);
@@ -78,23 +90,52 @@ try {
   const retried = await call("memory_submit", input);
   assert.equal(submitted.operationId, retried.operationId);
   assert.equal(cli(["status"]).activeMemories, 1);
+  const situational = await call("memory_search", { category: "situational" });
+  assert.equal(situational.memories.length, 1);
+  assert.equal(situational.memories[0].category, "situational");
+  assert.equal((await call("memory_search", { category: "user_profile" })).memories.length, 0);
   await call("memory_save_summary", {
     requestId: "smoke-summary-1", title: "夜间温度", text: "该会话的说话人明确希望卧室夜间26度。",
     memories: [{ id: submitted.memory.id, revision: submitted.memory.revision }],
   });
   assert.equal((await call("memory_read_summaries")).summaries.length, 1);
 
+  const turn = {
+    requestId: "smoke-record-1", conversationId: "smoke-live-chat",
+    role: "user", content: "  合成逐轮记录：请保留换行。\n第二行。  ",
+  };
+  const receipt = await call("memory_record_turn", turn);
+  const duplicate = await call("memory_record_turn", turn);
+  assert.equal(receipt.receiptId, duplicate.receiptId);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(receipt.origin, "model_reported");
+  assert.equal(cli(["status"]).messages, 2);
+
   const backup = join(directory, "backup.sqlite");
   const exported = join(directory, "export.json");
   cli(["backup", backup]);
   cli(["export", exported]);
-  assert.equal(JSON.parse(readFileSync(exported, "utf8")).messages.length, 1);
+  const exportData = JSON.parse(readFileSync(exported, "utf8"));
+  assert.equal(exportData.messages.length, 2);
+  assert.ok(exportData.messages.some((message) => message.content === turn.content));
   if (process.platform !== "win32") {
     assert.equal(statSync(backup).mode & 0o777, 0o600);
     assert.equal(statSync(exported).mode & 0o777, 0o600);
   }
   assert.ok(!diagnostics.includes(content), "子进程日志不能包含原话");
-  process.stdout.write("构建产物烟测通过：9个工具、原文、幂等写入、概要、管理命令和一致性备份。\n");
+  assert.ok(!diagnostics.includes(turn.content), "子进程日志不能包含模型提交正文");
+  const retired = admin({ action: "retire", id: submitted.memory.id, revision: submitted.memory.revision, reason: "合成验收停用" });
+  assert.equal((await call("memory_search", { category: "situational" })).memories.length, 0);
+  admin({ action: "undo", operationId: retired.operationId });
+  const restored = (await call("memory_search", { category: "situational" })).memories;
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].id, submitted.memory.id);
+  assert.equal(admin({ action: "delete", id: restored[0].id, revision: restored[0].revision }).deleted, true);
+  assert.equal(cli(["status"]).memories, 0);
+  assert.equal(cli(["status"]).messages, 2);
+  assert.equal((await call("memory_read_summaries")).summaries.length, 0);
+  assert.equal((await client.callTool({ name: "memory_submit", arguments: input })).isError, true);
+  process.stdout.write("构建产物烟测通过：11个工具、字节分段续读与校验、逐轮记录与幂等回执、原文、概要、停用/撤销/删除闭环和一致性备份。\n");
 } finally {
   await client?.close();
   await transport?.close();

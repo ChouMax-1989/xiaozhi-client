@@ -76,6 +76,15 @@ describe("记忆管理配置与任务", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("未配置历史凭据也提供逐轮记录角色规则，不启动同步", async () => {
+    const service = new MemoryAdminService({ config, worker });
+    const overview = await service.getOverview();
+    expect(overview.recordingPrompt).toContain("memory_record_turn");
+    expect(overview.recordingPrompt).toContain("requestId");
+    expect(overview.ready).toBe(false);
+    expect(worker.run).not.toHaveBeenCalled();
+  });
+
   it("初始化使用固定入口和数据库，保存后明确需要重启", async () => {
     const service = new MemoryAdminService({ config, worker });
     expect(service.getSettings()).toMatchObject({
@@ -247,8 +256,10 @@ describe("记忆管理配置与任务", () => {
     const tokenPath = join(directory, "secrets/xiaozhi-history-token");
     expect(result).toEqual({ configured: true });
     expect(readFileSync(tokenPath, "utf8")).toBe(token);
-    expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
-    expect(statSync(join(directory, "secrets")).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+      expect(statSync(join(directory, "secrets")).mode & 0o777).toBe(0o700);
+    }
     expect(
       JSON.stringify([result, appConfig, service.getSettings()])
     ).not.toContain(token);
@@ -261,22 +272,44 @@ describe("记忆管理配置与任务", () => {
     ).rejects.toMatchObject({ code: "MEMORY_INVALID_CREDENTIAL" });
   });
 
-  it("拒绝凭据目录和目标文件的符号链接", async () => {
+  it("拒绝凭据目录的符号链接或目录联接", async () => {
     configure();
     const service = new MemoryAdminService({ config, worker });
     const outside = join(directory, "outside");
     mkdirSync(outside);
-    symlinkSync(outside, join(directory, "secrets"));
+    symlinkSync(
+      outside,
+      join(directory, "secrets"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
     await expect(service.saveCredential("token123")).rejects.toMatchObject({
       code: "MEMORY_UNSAFE_DIRECTORY",
     });
-    rmSync(join(directory, "secrets"));
+  });
+
+  it("拒绝凭据目标文件的符号链接（Windows 需要符号链接权限）", async (context) => {
+    configure();
+    const service = new MemoryAdminService({ config, worker });
+    const outside = join(directory, "outside");
+    mkdirSync(outside);
     mkdirSync(join(directory, "secrets"));
     writeFileSync(join(outside, "target"), "unchanged");
-    symlinkSync(
-      join(outside, "target"),
-      join(directory, "secrets/xiaozhi-history-token")
-    );
+    try {
+      symlinkSync(
+        join(outside, "target"),
+        join(directory, "secrets/xiaozhi-history-token"),
+        "file"
+      );
+    } catch (error) {
+      if (
+        process.platform === "win32" &&
+        (error as NodeJS.ErrnoException).code === "EPERM"
+      ) {
+        context.skip();
+        return;
+      }
+      throw error;
+    }
     await expect(service.saveCredential("token123")).rejects.toMatchObject({
       code: "MEMORY_UNSAFE_CREDENTIAL_FILE",
     });
@@ -361,9 +394,12 @@ describe("记忆管理配置与任务", () => {
     expect(
       readFileSync(join(directory, "memory/backups", backup.fileName), "utf8")
     ).toBe("SQLite synthetic backup");
-    expect(
-      statSync(join(directory, "memory/backups", backup.fileName)).mode & 0o777
-    ).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(
+        statSync(join(directory, "memory/backups", backup.fileName)).mode &
+          0o777
+      ).toBe(0o600);
+    }
     const download = await service.openBackup(backup.fileName);
     expect(await new Response(download.stream).text()).toBe(
       "SQLite synthetic backup"
@@ -423,6 +459,30 @@ describe("记忆管理工作进程隔离", () => {
     );
     child.emit("close", 0);
     await expect(result).resolves.toEqual({ counts: {} });
+  });
+
+  it.each([
+    "记忆不存在或已删除。",
+    "目标记忆版本已改变，请刷新后重试。",
+    "该请求涉及已删除记忆，不能重试恢复。",
+  ])("删除冲突返回可操作的安全提示：%s", async (message) => {
+    const child = fakeChild();
+    const runner = new MemoryAdminProcessRunner(() => child);
+    const result = runner.run(
+      { action: "delete", id: "memory-test", revision: 1 },
+      {},
+      { timeoutMs: 1000, maxBytes: 1024 }
+    );
+    child.stdout.emit(
+      "data",
+      Buffer.from(JSON.stringify({ success: false, error: message }))
+    );
+    child.emit("close", 1);
+    await expect(result).rejects.toMatchObject({
+      code: "MEMORY_CONFLICT",
+      message,
+      status: 409,
+    });
   });
 
   it("协议失败不会回显工作进程错误中的凭据或正文", async () => {

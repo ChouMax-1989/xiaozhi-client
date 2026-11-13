@@ -102,6 +102,22 @@ describe("记忆管理 HTTP 安全与契约", () => {
     );
   });
 
+  it("分类和当前记忆筛选传入工作进程后再分页", async () => {
+    const response = await app.request(
+      `${origin}/api/memory/entries?category=user_profile&status=current&page=2&pageSize=12`
+    );
+    expect(response.status).toBe(200);
+    expect(vi.mocked(worker.run).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        action: "memories",
+        category: "user_profile",
+        status: "current",
+        page: 2,
+        pageSize: 12,
+      })
+    );
+  });
+
   it.each([
     { Origin: "https://attacker.invalid" },
     { Origin: "null" },
@@ -156,6 +172,7 @@ describe("记忆管理 HTTP 安全与契约", () => {
     "page=1&page=2",
     "path=/etc/passwd",
     "status=made-up",
+    "category=made-up",
   ])("非法分页和额外参数不进入工作进程：%s", async (query) => {
     const response = await app.request(`${origin}/api/memory/entries?${query}`);
     expect(response.status).toBe(400);
@@ -221,6 +238,29 @@ describe("记忆管理 HTTP 安全与契约", () => {
     });
     expect(form.status).toBe(415);
     expect(worker.run).not.toHaveBeenCalled();
+  });
+
+  it("删除限定单条记忆与版本，拒绝跨源和额外字段", async () => {
+    const url = `${origin}/api/memory/entries/entry-123`;
+    const send = (body: unknown, headers = {}) =>
+      app.request(url, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+    expect(
+      (await send({ revision: 3 }, { Origin: "https://attacker.invalid" }))
+        .status
+    ).toBe(403);
+    expect((await send({ revision: 3, all: true })).status).toBe(400);
+    expect((await send({ revision: 0 })).status).toBe(400);
+    expect(worker.run).not.toHaveBeenCalled();
+    expect((await send({ revision: 3 })).status).toBe(200);
+    expect(vi.mocked(worker.run).mock.calls[0]?.[0]).toEqual({
+      action: "delete",
+      id: "entry-123",
+      revision: 3,
+    });
   });
 
   it("停用保留版本检查和多行理由，撤销只接受固定操作 ID", async () => {

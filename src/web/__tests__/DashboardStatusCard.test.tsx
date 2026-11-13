@@ -195,20 +195,25 @@ describe("DashboardStatusCard", () => {
     expect(screen.getByText("0")).toBeInTheDocument();
   });
 
-  it("应该具有正确的响应式类名", () => {
-    const { container } = render(<DashboardStatusCard />);
-
-    const gridContainer = container.querySelector(".grid");
-    expect(gridContainer).toHaveClass("grid-cols-1", "gap-4", "px-4");
-    expect(gridContainer).toHaveClass("@xl/main:grid-cols-2");
-    expect(gridContainer).toHaveClass("@5xl/main:grid-cols-4");
+  it("四类配置有明确命名区域", () => {
+    render(<DashboardStatusCard />);
+    for (const name of ["小智接入点", "MCP服务", "实时语音", "系统设置"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
   });
 
-  it("应该正确渲染MiniCircularProgress组件", () => {
-    const { container } = render(<DashboardStatusCard />);
-
-    // 检查是否有4个进度圆形组件（每个卡片一个）
-    const progressCircles = container.querySelectorAll("svg");
-    expect(progressCircles.length).toBeGreaterThanOrEqual(4);
+  it("显示真实配置完成度与待补配置数量", () => {
+    useConfig.mockReturnValue({
+      modelscope: { apiKey: "" },
+      platforms: { coze: { token: "" } },
+      connection: {
+        heartbeatInterval: 30000,
+        heartbeatTimeout: 5000,
+        reconnectInterval: 5000,
+      },
+    });
+    render(<DashboardStatusCard />);
+    expect(screen.getByText("已配置 3/5")).toBeInTheDocument();
+    expect(screen.getByText("还差 2 项配置")).toBeInTheDocument();
   });
 });

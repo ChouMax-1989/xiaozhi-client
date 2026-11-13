@@ -734,6 +734,14 @@ export class MCPServiceManager extends EventEmitter {
         return result as ToolCallResult;
       }
       case "standard": {
+        if (
+          !configManager.isToolEnabled(
+            target.toolInfo!.serviceName,
+            target.toolInfo!.originalName
+          )
+        ) {
+          throw new Error(`工具 ${target.toolName} 已停用`);
+        }
         const service = this.services.get(target.toolInfo!.serviceName);
         if (!service) {
           throw new Error(`服务 ${target.toolInfo!.serviceName} 不可用`);
@@ -808,8 +816,8 @@ export class MCPServiceManager extends EventEmitter {
         duration: Date.now() - startTime,
       });
 
-      // 更新成功统计
-      this.recordToolCallStats(target, true);
+      // MCP 工具可能正常返回包含 isError 的失败结果。
+      this.recordToolCallStats(target, result.isError !== true);
 
       return result as ToolCallResult;
     } catch (error) {
