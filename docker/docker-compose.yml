@@ -1,64 +1,20 @@
 services:
   xiaozhi-client:
-    image: shenjingnan/xiaozhi-client:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: xiaozhi-client:local
+    # 每次启动都检查源码构建，避免误拉取与当前代码无关的镜像。
+    pull_policy: build
     container_name: xiaozhi-client
     restart: unless-stopped
+    stop_grace_period: 30s
+    # 使用镜像中的 HTTP 健康检查；无需额外网络或固定子网。
 
-    # 端口映射（支持 IPv4 和 IPv6）
+    # 只需一个端口即可访问 WebUI 和 /mcp。
     ports:
-      - "9999:9999"    # Web UI 端口
-      - "3000:3000"    # 备用端口
+      - "${XIAOZHI_BIND_ADDRESS:-0.0.0.0}:${XIAOZHI_WEB_PORT:-9999}:9999"
 
-    # 环境变量
-    environment:
-      - NODE_ENV=production
-      - XIAOZHI_WORKSPACE=/workspaces
-      - XIAOZHI_CONTAINER=true
-      - XIAOZHI_CONFIG_DIR=/workspaces
-
-    # 挂载卷
     volumes:
-      # 工作目录持久化（推荐使用 ~/xiaozhi-client）
-      - ~/xiaozhi-client:/workspaces
-
-    # 健康检查
-    healthcheck:
-      test: ["CMD", "xiaozhi", "--version"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-    # 网络配置
-    networks:
-      - xiaozhi-network
-
-    # 资源限制
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
-
-# 网络配置（支持 IPv4 和 IPv6）
-networks:
-  xiaozhi-network:
-    driver: bridge
-    enable_ipv6: true
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.20.0.0/24
-          gateway: 172.20.0.1
-        - subnet: fd00:abcd::/64
-          gateway: fd00:abcd::1
-
-# 卷配置
-volumes:
-  xiaozhi-config:
-    driver: local
-  xiaozhi-logs:
-    driver: local
+      # 保留现有家用部署目录，可通过环境变量指定其他绝对路径。
+      - "${XIAOZHI_DATA_DIR:-${HOME}/xiaozhi-client}:/workspaces"
