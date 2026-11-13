@@ -22,7 +22,11 @@ import type {
   InternalMCPServiceConfig,
   MCPServiceEventCallbacks,
 } from "./types.js";
-import { inferTransportTypeFromConfig } from "./utils/index.js";
+import {
+  inferTransportTypeFromConfig,
+  isMemoryToolName,
+  redactToolLogValue,
+} from "./utils/index.js";
 
 /**
  * MCP 连接类
@@ -403,9 +407,10 @@ export class MCPConnection {
       throw new Error(`工具 ${name} 在服务 ${this.name} 中不存在`);
     }
 
+    const sensitive = isMemoryToolName(name);
     console.debug(
       `调用 ${this.name} 服务的工具 ${name}，参数:`,
-      JSON.stringify(arguments_)
+      JSON.stringify(redactToolLogValue(arguments_, sensitive))
     );
 
     try {
@@ -416,7 +421,7 @@ export class MCPConnection {
 
       console.debug(
         `工具 ${name} 调用成功，结果:`,
-        `${JSON.stringify(result).substring(0, 500)}...`
+        `${JSON.stringify(redactToolLogValue(result, sensitive)).substring(0, 500)}...`
       );
 
       return result as ToolCallResult;
@@ -440,7 +445,10 @@ export class MCPConnection {
       // 其他错误正常抛出
       console.error(
         `工具 ${name} 调用失败:`,
-        error instanceof Error ? error.message : String(error)
+        redactToolLogValue(
+          error instanceof Error ? error.message : String(error),
+          sensitive
+        )
       );
       throw error;
     }

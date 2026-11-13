@@ -1,0 +1,196 @@
+# 本地对话档案与记忆库
+
+这个模块把官方小智的文字对话、工具消息和记忆保存在家庭设备的 SQLite 数据库中。小智当前聊天模型通过 MCP 读取原文、提炼信息和整理概要；本地程序校验来源、作用域、时间与版本，不调用新的模型或向量 API。
+
+这是可选功能。普通客户端和现有家庭工具仍按原配置运行。第一版适用于一个智能体的独立实例；多个智能体请使用分开的容器、配置和数据库。
+
+任务与复核依据见[任务计划](../../plans/local-memory-20261113.md)。实际完成的验证与尚待联调的项目见[实施记录](../../local-memory-implementation-20261113.md)。
+
+## 可以做什么
+
+| 能力 | 实际行为 |
+| --- | --- |
+| 官方历史同步 | 读取已核实的聊天列表和消息接口，保留用户、助手及工具的原始 JSON；分页、断点和幂等写入 |
+| 本地原文 | 原话修改时追加修订，旧原话保留；音频只保留官方返回的地址及元数据，不下载录音 |
+| 提炼记忆 | 现有小智聊天模型提交结构化事实，每条附真实消息 ID、修订和精确引文 |
+| 条件与归属 | 区分说话人、关联人物和实体；不同条件分别保存；未知身份按会话限定 |
+| 纠正和版本 | 只有明确纠正才替换对应状态；晚到历史不回滚新状态；原版本和操作记录保留 |
+| 检索 | 本地关键词、主体属性和条件匹配；默认只返回有效正式记忆，没有另购 embedding 服务 |
+| 概要 | 引用现有记忆版本；来源改变、被纠正、失效或撤销后，旧概要不再作为有效结果返回 |
+| 运维 | 本机命令查看状态、导入档案、备份、导出、查看操作及撤销；不向模型暴露文件操作或凭据 |
+
+正式条目表示「用户曾明确这样说过」，不是外部事实验证结果。引文匹配、角色和版本校验能拒绝伪造来源，但不能证明模型完全理解了反话、转述或条件句。推断、计划、单次事件和含糊冲突先保留为候选。
+
+## 运行条件
+
+- 使用本仓库包含记忆模块的源码构建版本。旧 npm 包或上游镜像不包含这些改动。
+- Node.js 至少 22.12。示例始终带 `--experimental-sqlite`，兼容需要显式启用 SQLite 的版本。
+- 客户端只配置一个非空 WSS 接入点。记忆服务启动及每次调用都会重新核对配置；添加第二个端点或更换端点会拒绝访问原库。
+- 官方历史同步需要本机的官方控制台 HTTP 登录凭据。它与 MCP 接入地址里的令牌是不同用途，不能互换。
+
+没有 HTTP 凭据也可以运行离线导入、存储、检索和 MCP。定时同步默认关闭。原始历史可以定时同步，但语义提炼仍发生在小智聊天模型实际调用工具时；目前不提供无人值守的免费模型批处理承诺。
+
+## Docker 接入
+
+完整示例位于 `docker/examples/memory.config.json`。在当前配置里增加 `mcpServers.memory`，保留已经设置的其他工具，并填入当前智能体的 ID。不要用示例覆盖已有配置。
+
+```json
+{
+  "mcpEndpoint": "wss://请替换为该智能体的官方完整MCP接入点",
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": ["--experimental-sqlite", "/app/dist/memory/stdio.js"],
+      "env": {
+        "XIAOZHI_MEMORY_AGENT_ID": "请替换为智能体ID",
+        "XIAOZHI_MEMORY_DB": "/workspaces/memory/archive.sqlite",
+        "XIAOZHI_MEMORY_CLIENT_CONFIG": "/workspaces/xiaozhi.config.json",
+        "XIAOZHI_MEMORY_TOKEN_FILE": "/workspaces/secrets/xiaozhi-history-token",
+        "XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS": "0"
+      }
+    }
+  },
+  "webUI": { "port": 9999 }
+}
+```
+
+`XIAOZHI_MEMORY_CLIENT_CONFIG` 必须显式填写绝对路径，因为 stdio 子进程不会自动继承父进程的全部自定义环境变量。数据库和凭据文件都位于现有 `/workspaces` 持久化挂载中。
+
+先完成源码构建与客户端配置，再重启：
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml logs --tail=100
+```
+
+在 WebUI 工具列表里应看到 `memory__memory_status` 等工具。调用状态工具应返回档案与记忆数量。正文在日志中会被隐藏；工具调用者仍会收到真实查询结果。
+
+### 配置项
+
+| 环境变量 | 要求或默认值 | 作用 |
+| --- | --- | --- |
+| `XIAOZHI_MEMORY_AGENT_ID` | 必填 | 固定智能体；模型参数不能修改 |
+| `XIAOZHI_MEMORY_DB` | 必填，绝对路径 | SQLite 文件，首次创建绑定智能体和身份模式 |
+| `XIAOZHI_MEMORY_CLIENT_CONFIG` | MCP 必填，绝对路径 | 每次工具调用核对单端点及绑定 |
+| `XIAOZHI_MEMORY_TOKEN_FILE` | 可选，绝对路径 | 同步器读取的 HTTP Bearer 凭据文件；不返回给模型 |
+| `XIAOZHI_MEMORY_OWNER` | 默认不设置 | 仅当该智能体明确只由一个人使用时填写稳定本地标识，例如 `max`；允许跨会话合并为该人 |
+| `XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS` | `0` | `0` 关闭；启用时至少 60 秒，最多 2147483 秒 |
+| `XIAOZHI_MEMORY_SYNC_MAX_REQUESTS` | `20` | 自动同步每轮请求预算，1 到 1000；预算用尽后保存进度 |
+
+未配置 `OWNER` 时，记忆仍然可以保存，归属形式是 `chat:会话ID:unknown`。这是未知说话人的会话范围，并不代表已确认某个人。不要在多人共用的智能体上设置一个固定户主身份。数据库已绑定的身份模式不能直接改名复用；身份迁移需核对后另做迁移。
+
+当前 `/mcp`、WebUI 和家庭工具使用同一应用访问边界。端点检查防止配置串库，不是完整的家庭成员鉴权；有权访问本机管理界面的人也能调用工具。保留在受信任的本机或家庭网络，不要公开服务端口。
+
+### 官方历史凭据
+
+在自己的部署机器上，通过已登录的官方控制台取得历史接口使用的 Bearer 凭据，保存在 `secrets/xiaozhi-history-token` 文件中；文件只包含凭据值，不含 `Bearer ` 前缀，不要贴到聊天、代码或截图中。目录权限建议 700，文件权限 600。
+
+这里只提供本机凭据文件接入，不自动读取浏览器登录信息，也不假设官方刷新接口或固定有效期。遇到 401/403，同步停止本轮且保留本地数据；更新本机文件后重试。官方开发者接口是否对个人账号开放尚未确认，本模块不依赖该接口。
+
+确认单次同步成功后，可把同步间隔改为例如 `300`。两个连续完整扫描的列表和消息指纹一致才报告 `complete`；预算用尽、超时、限流、分页变化都保持未完成。远端分页没有快照保证，持续发生变化时需要后续继续核对；本地不会因一轮列表缺少某聊天而删除旧档案。
+
+## 本机管理命令
+
+源码构建后使用 `node --experimental-sqlite dist/memory/cli.js`。先配置本机路径和智能体：
+
+```bash
+export XIAOZHI_MEMORY_AGENT_ID=你的智能体ID
+export XIAOZHI_MEMORY_DB=/绝对路径/memory/archive.sqlite
+export XIAOZHI_MEMORY_TOKEN_FILE=/绝对路径/secrets/xiaozhi-history-token
+node --experimental-sqlite dist/memory/cli.js status
+node --experimental-sqlite dist/memory/cli.js sync --max-requests 100
+```
+
+Docker 内的 CLI 也需要显式环境变量；`mcpServers.memory.env` 只传给对应子进程，不会自动变成容器全局变量：
+
+```bash
+docker compose -f docker/docker-compose.yml exec \
+  -e XIAOZHI_MEMORY_AGENT_ID=你的智能体ID \
+  -e XIAOZHI_MEMORY_DB=/workspaces/memory/archive.sqlite \
+  -e XIAOZHI_MEMORY_TOKEN_FILE=/workspaces/secrets/xiaozhi-history-token \
+  xiaozhi-client node --experimental-sqlite /app/dist/memory/cli.js sync --max-requests 100
+```
+
+`status` 显示数量和最近同步核对信息，`sync` 打印本轮安全摘要，不打印原话或令牌。原文保存成功但尚未收敛时可以再次运行 `sync`；不要把 `incomplete` 当成全量完成。
+
+### 离线导入格式
+
+本机 `import` 接受 `messages` 数组及可选的 `chats` 数组，最多各 10000 项。消息 ID 使用原平台稳定 ID，不要为重复导入随机生成 ID。完整原始信封放入 `raw`。
+
+```json
+{
+  "chats": [{ "id": "chat-1", "raw": { "title": "设置讨论" } }],
+  "messages": [{
+    "id": "message-1",
+    "chatId": "chat-1",
+    "role": "user",
+    "content": "我希望卧室夜间保持26度。",
+    "createdAt": "2026-11-13T10:00:00+07:00",
+    "raw": { "id": "message-1", "role": "user", "content": "我希望卧室夜间保持26度。" }
+  }]
+}
+```
+
+```bash
+node --experimental-sqlite dist/memory/cli.js import /绝对路径/archive.json
+```
+
+没有可靠时区的时间用 `null`，不要自动补成服务器时区。这类来源仍存档，但无法据此自动纠正较新的当前事实。
+
+### 备份、恢复和撤销
+
+```bash
+node --experimental-sqlite dist/memory/cli.js backup /绝对路径/backups/memory-20261113.sqlite
+node --experimental-sqlite dist/memory/cli.js export /绝对路径/backups/memory-20261113.json
+node --experimental-sqlite dist/memory/cli.js operations --limit 20
+node --experimental-sqlite dist/memory/cli.js undo 操作ID
+```
+
+备份使用 SQLite `VACUUM INTO`，包含已提交的 WAL 数据，不能用只复制主 `.sqlite` 文件的方式替代。恢复时先停止记忆服务，用备份文件作为一个新的数据库路径，保留原文件，确认 `status` 和来源数据后再启用。备份包含绑定和同步检查点；更换智能体或身份配置不能直接复用。
+
+完整 JSON 导出供检查与迁移，含原始修订、记忆版本和审计记录，不是 `import` 的简化输入格式。整库恢复使用 SQLite 备份。撤销会检查后续修改及旧来源有效性，有冲突时拒绝覆盖。
+
+同一智能体轮换 MCP 接入令牌后，先在本机核对新的客户端配置，再执行 `rebind-endpoint`；该命令需要 `XIAOZHI_MEMORY_CLIENT_CONFIG`，会核对已知智能体标识并记录重新绑定操作。不要用它把其他智能体接到原库。
+
+## 让小智开始提炼
+
+在小智角色说明里加入以下约定，并让模型实际调用已列出的工具。聚合后工具名带服务名前缀，以当前工具列表为准：
+
+> 需要个人历史时，先查询本地记忆。整理记忆时，先读取待处理原文和提炼规则；原文截断则继续分段读取。每条记忆保留真实来源 ID、版本和原话，区分否定、条件、人物和时间。只有用户明确纠正才替换旧版本；不确定的内容暂存候选。读完并完成处理后才标记来源已审阅。概要只基于当前有效记忆。
+
+初次可以说：「请整理本地记忆库中尚未处理的对话，每次处理少量，先告诉我还有多少待处理；保存时不要丢掉人物、否定和条件。」
+
+记忆 MCP 提供以下工具：
+
+| 工具原名 | 用途 |
+| --- | --- |
+| `memory_status` | 数量和同步状态 |
+| `memory_read_sources` | 待提炼原文、真实来源 ID、相关旧记忆及规则 |
+| `memory_read_source` | 按 ID、版本和偏移量读取长消息或核对引文 |
+| `memory_search` | 关键词检索，默认排除候选和历史失效条目 |
+| `memory_submit` | 提交新增、补证或明确纠正，代码校验后保存 |
+| `memory_finish_sources` | 标记已经审阅的来源版本 |
+| `memory_save_summary` | 保存引用记忆版本的概要 |
+| `memory_read_summaries` | 读取仍然有效的概要 |
+| `memory_capture_candidate` | 当前对话未同步时暂存，不能冒充原文证据 |
+
+待提炼队列可以查询，系统不会定时偷偷调用另一个模型。工具实际是否被官方模型正确选择、一次能处理多少材料，要在真实小智对话中验收。官方原有记忆功能与本地库相互独立，本模块不会修改或同步覆盖官方的 20 条记忆设置。
+
+## 语义验收
+
+存储测试验证来源、时间、事务和版本规则。模型语义验收要另测，不能用存储测试通过率代替。建议把以下原句作为真实小智的验收材料，逐条检查原文、提炼结果与后续检索：
+
+| 原句或顺序 | 应有结果 |
+| --- | --- |
+| 我老婆不喜欢香菜 | 妻子的用户转述；不是说话人偏好 |
+| 我不是不喝咖啡，我只是不喝含糖咖啡 | 保留双重否定和「含糖」条件 |
+| 今天卧室调到24度 | 单次事件候选，不生成永久温度偏好 |
+| 白天28度，夜间26度 | 两个条件共存 |
+| 更正，以后夜间改为25度 | 明确替代夜间旧值，白天值保留 |
+| 如果打折，我准备买洗碗机 | 有条件的计划候选，不记作已经拥有 |
+| 助手建议睡前读书，用户未确认 | 不保存为用户长期偏好 |
+| 先同步新设置，再补录旧聊天 | 较新状态不回滚 |
+| 同一份历史重复同步 | 不重复记忆或虚增来源数量 |
+| 用户澄清接受小智免费聊天模型提炼，只是不增加付费 API | 保留这个项目范围，纠正「所有 AI 都不可用」的旧理解 |
+
+如果模型遗漏条件、串人物或未核对来源，先调整角色提示和工具使用流程，再重跑上述语义验收；不要为了提高保存数量降低来源校验。

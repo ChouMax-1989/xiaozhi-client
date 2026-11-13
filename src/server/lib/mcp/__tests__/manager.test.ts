@@ -5,9 +5,27 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "../../../Logger.js";
 import { MCPServiceManager } from "../../../lib/mcp";
-import type { ToolInfo } from "../../../lib/mcp/types";
+import type { ToolCallResult, ToolInfo } from "../../../lib/mcp/types";
 import type { CustomMCPHandler } from "../custom.js";
+
+interface PrivacyTestInternals {
+  services: Map<
+    string,
+    {
+      isConnected(): boolean;
+      callTool(
+        name: string,
+        args: Record<string, unknown>
+      ): Promise<ToolCallResult>;
+      disconnect(): Promise<void>;
+    }
+  >;
+  tools: Map<string, ToolInfo>;
+  toolCallLogger: { recordToolCall: ReturnType<typeof vi.fn> };
+  updateToolStatsSafe(): Promise<void>;
+}
 
 // Mock dependencies
 vi.mock("../../../Logger.js", () => ({
@@ -721,6 +739,135 @@ describe("MCPServiceManager - callTool 编排流程", () => {
     // Act & Assert
     await expect(serviceManager.callTool(toolName, {})).rejects.toThrow(
       `未找到工具: ${toolName}`
+    );
+  });
+});
+
+describe("MCPServiceManager - 记忆工具别名的日志隔离", () => {
+  let manager: MCPServiceManager;
+  let internals: PrivacyTestInternals;
+  let custom: ReturnType<typeof vi.mocked<CustomMCPHandler>>;
+  let call: ReturnType<typeof vi.fn>;
+  let record: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    manager = new MCPServiceManager();
+    internals = manager as unknown as PrivacyTestInternals;
+    custom = vi.mocked(manager.getCustomMCPHandler());
+    custom.hasTool = vi.fn();
+    custom.getToolInfo = vi.fn();
+    custom.cleanup = vi.fn();
+    custom.hasTool.mockReturnValue(true);
+    custom.getToolInfo.mockReturnValue({
+      name: "family_recall",
+      description: "家庭查询别名",
+      inputSchema: { type: "object" },
+      handler: {
+        type: "mcp",
+        config: { serviceName: "family", toolName: "memory_search" },
+      },
+    });
+    call = vi.fn();
+    record = vi.fn();
+    internals.services.set("family", {
+      isConnected: () => true,
+      callTool: call,
+      disconnect: async () => {},
+    });
+    internals.toolCallLogger = { recordToolCall: record };
+    vi.spyOn(internals, "updateToolStatsSafe").mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await manager.cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("别名解析到记忆原名后隐藏日志，而实际调用保留完整正文", async () => {
+    const secret = "别名工具读取的家庭原话";
+    const rawResult = { content: [{ type: "text", text: secret }] };
+    call.mockResolvedValue(rawResult);
+
+    expect(manager.isSensitiveToolCall("family_recall")).toBe(true);
+    const result = await manager.callTool("family_recall", { query: secret });
+
+    expect(result).toBe(rawResult);
+    expect(call).toHaveBeenCalledWith("memory_search", { query: secret });
+    expect(JSON.stringify(record.mock.calls)).not.toContain(secret);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "memory_search",
+        success: true,
+        duration: expect.any(Number),
+      })
+    );
+  });
+
+  it("标准工具路由也按原始记忆名称隐藏完整结果调试日志", async () => {
+    const secret = "标准路由的私密原话";
+    custom.hasTool.mockReturnValue(false);
+    internals.tools.set("renamed_tool", {
+      serviceName: "family",
+      originalName: "memory_get",
+      tool: { name: "memory_get", inputSchema: { type: "object" } },
+    });
+    const rawResult = { content: [{ type: "text", text: secret }] };
+    call.mockResolvedValue(rawResult);
+
+    expect(manager.isSensitiveToolCall("renamed_tool")).toBe(true);
+    expect(await manager.callTool("renamed_tool", { query: secret })).toBe(
+      rawResult
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls)).not.toContain(
+      secret
+    );
+    expect(JSON.stringify(record.mock.calls)).not.toContain(secret);
+  });
+
+  it("别名错误的日志全部隐藏正文，同时继续抛出原异常", async () => {
+    const rawError = new Error("别名异常中的私密引文");
+    call.mockRejectedValue(rawError);
+
+    await expect(manager.callTool("family_recall", {})).rejects.toBe(rawError);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "memory_search",
+        success: false,
+        error: "[记忆正文已隐藏]",
+      })
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      "[MCPManager] MCP 同步工具 family_recall 调用失败",
+      { error: "[记忆正文已隐藏]" }
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      "[MCPManager] 工具 family_recall 调用失败",
+      { error: "[记忆正文已隐藏]" }
+    );
+  });
+
+  it("普通工具别名保留参数、返回值和原日志", async () => {
+    custom.getToolInfo.mockReturnValue({
+      name: "family_recall",
+      description: "普通工具别名",
+      inputSchema: { type: "object" },
+      handler: {
+        type: "mcp",
+        config: { serviceName: "family", toolName: "calculator_add" },
+      },
+    });
+    const rawResult = { content: [{ type: "text", text: "8" }] };
+    call.mockResolvedValue(rawResult);
+
+    expect(manager.isSensitiveToolCall("family_recall")).toBe(false);
+    await manager.callTool("family_recall", { a: 3, b: 5 });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "calculator_add",
+        arguments: { a: 3, b: 5 },
+        result: rawResult,
+      })
     );
   });
 });

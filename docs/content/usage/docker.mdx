@@ -18,7 +18,7 @@ description: "从当前源码构建 Docker 镜像，在家中运行 MCP 和 WebU
 已有仓库时，进入该仓库并切换到需要部署的分支或提交。源码目录必须与持久化数据目录分开；下例将源码放在 `~/xiaozhi-client-src`，数据仍放在 `~/xiaozhi-client`：
 
 ```bash
-git clone https://github.com/shenjingnan/xiaozhi-client.git "$HOME/xiaozhi-client-src"
+git clone https://github.com/ChouMax-1989/xiaozhi-client.git "$HOME/xiaozhi-client-src"
 cd "$HOME/xiaozhi-client-src"
 ```
 
@@ -72,6 +72,8 @@ docker compose -f docker/docker-compose.yml up -d --build
 容器内 `webUI.port` 保持 9999。修改宿主机端口只需设置 `XIAOZHI_WEB_PORT`，不需要修改配置文件。WebUI 和 `/mcp` 共用此端口，不需要额外开放 3000。
 
 ## 配置官方 MCP 接入点
+
+需要保存对话和长期记忆时，按[本地记忆库](./local-memory)配置内置记忆 MCP。该功能随当前源码构建，不需要额外安装模型服务；请使用单智能体独立实例。
 
 1. 在部署机器上访问 `http://localhost:9999`；其他局域网设备访问 `http://宿主机局域网IP:9999`。如果修改了宿主机端口，使用修改后的端口。
 2. 在小智官方控制台打开所用智能体的 MCP 接入点设置，复制完整的 `wss://...` 接入地址。

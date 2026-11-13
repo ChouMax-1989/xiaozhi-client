@@ -130,6 +130,7 @@ describe("MCPConnection", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -310,6 +311,7 @@ describe("MCPConnection", () => {
     beforeEach(async () => {
       const mockTools = [
         { name: "test-tool", description: "测试工具", inputSchema: {} },
+        { name: "memory_search", description: "记忆检索", inputSchema: {} },
       ] as Tool[];
 
       mockClient.connect.mockResolvedValue(undefined);
@@ -354,6 +356,49 @@ describe("MCPConnection", () => {
       await expect(connection.callTool("test-tool", {})).rejects.toThrow(
         "Tool call failed"
       );
+    });
+
+    it("记忆调用不记录原话，但真实参数和返回对象保持不变", async () => {
+      const secret = "家庭记忆中的私密原话";
+      const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+      const rawResult = { content: [{ type: "text", text: secret }] };
+      const args = { query: secret };
+      mockClient.callTool.mockResolvedValue(rawResult);
+
+      const result = await connection.callTool("memory_search", args);
+
+      expect(result).toBe(rawResult);
+      expect(mockClient.callTool).toHaveBeenCalledWith({
+        name: "memory_search",
+        arguments: args,
+      });
+      expect(JSON.stringify(debug.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(debug.mock.calls)).toContain("记忆正文已隐藏");
+    });
+
+    it("记忆异常只隐藏日志内容，调用者仍收到原异常", async () => {
+      const rawError = new Error("异常中的私密原话");
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockClient.callTool.mockRejectedValue(rawError);
+
+      await expect(connection.callTool("memory_search", {})).rejects.toBe(
+        rawError
+      );
+      expect(errorLog).toHaveBeenCalledWith(
+        "工具 memory_search 调用失败:",
+        "[记忆正文已隐藏]"
+      );
+    });
+
+    it("普通工具继续记录原始参数和结果", async () => {
+      const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+      mockClient.callTool.mockResolvedValue({
+        content: [{ type: "text", text: "普通结果" }],
+      });
+      await connection.callTool("test-tool", { input: "普通参数" });
+      const logs = JSON.stringify(debug.mock.calls);
+      expect(logs).toContain("普通参数");
+      expect(logs).toContain("普通结果");
     });
   });
 

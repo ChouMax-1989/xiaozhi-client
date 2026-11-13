@@ -127,6 +127,7 @@ openspeech
 OTAHANDLER
 peiqi
 phantomjs
+pnpx
 postbuild
 punc
 pydantic

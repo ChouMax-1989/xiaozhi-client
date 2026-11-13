@@ -5,6 +5,11 @@
  */
 
 import { EventEmitter } from "node:events";
+import {
+  MEMORY_LOG_REDACTION,
+  isMemoryToolName,
+  redactToolLogValue,
+} from "@/mcp-core";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { isModelScopeURL } from "../../../config/index.js";
 import type { MCPToolConfig } from "../../../config/index.js";
@@ -682,6 +687,18 @@ export class MCPServiceManager extends EventEmitter {
     };
   }
 
+  /** 日志调用方通过真实目标识别记忆工具，避免自定义别名绕过脱敏。 */
+  public isSensitiveToolCall(toolName: string): boolean {
+    if (isMemoryToolName(toolName)) {
+      return true;
+    }
+    try {
+      return isMemoryToolName(this.resolveToolTarget(toolName).originalName);
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * 根据解析后的目标执行实际的工具调用
    * @param target 解析后的工具目标
@@ -730,7 +747,11 @@ export class MCPServiceManager extends EventEmitter {
         )) as ToolCallResult;
         logger.debug("[MCPManager] 工具调用成功", {
           toolName: target.toolName,
-          result: result,
+          result: redactToolLogValue(
+            result,
+            isMemoryToolName(target.toolName) ||
+              isMemoryToolName(target.originalName)
+          ),
         });
         return result;
       }
@@ -766,6 +787,12 @@ export class MCPServiceManager extends EventEmitter {
 
     // 解析工具目标（同步前置校验，可能抛出 Tool Not Found）
     const target = this.resolveToolTarget(toolName);
+    const sensitive =
+      isMemoryToolName(target.toolName) ||
+      isMemoryToolName(target.originalName);
+    const loggedArguments = sensitive
+      ? { redacted: MEMORY_LOG_REDACTION }
+      : arguments_;
 
     try {
       // 执行工具调用
@@ -775,8 +802,8 @@ export class MCPServiceManager extends EventEmitter {
       this.toolCallLogger.recordToolCall({
         toolName: target.originalName,
         serverName: target.logServerName,
-        arguments: arguments_,
-        result: result,
+        arguments: loggedArguments,
+        result: redactToolLogValue(result, sensitive),
         success: result.isError !== true,
         duration: Date.now() - startTime,
       });
@@ -790,18 +817,24 @@ export class MCPServiceManager extends EventEmitter {
       this.toolCallLogger.recordToolCall({
         toolName: target.originalName,
         serverName: target.logServerName,
-        arguments: arguments_,
+        arguments: loggedArguments,
         result: null,
         success: false,
         duration: Date.now() - startTime,
-        error: error instanceof Error ? error.message : String(error),
+        error: redactToolLogValue(
+          error instanceof Error ? error.message : String(error),
+          sensitive
+        ),
       });
 
       // 更新失败统计
       this.recordToolCallStats(target, false);
 
       logger.error(`[MCPManager] 工具 ${toolName} 调用失败`, {
-        error: error instanceof Error ? error.message : String(error),
+        error: redactToolLogValue(
+          error instanceof Error ? error.message : String(error),
+          sensitive
+        ),
       });
 
       throw error;
@@ -1033,7 +1066,10 @@ export class MCPServiceManager extends EventEmitter {
       return result as ToolCallResult;
     } catch (error) {
       logger.error(`[MCPManager] MCP 同步工具 ${toolName} 调用失败`, {
-        error: (error as Error).message,
+        error: redactToolLogValue(
+          (error as Error).message,
+          isMemoryToolName(toolName) || isMemoryToolName(originalName)
+        ),
       });
       throw error;
     }

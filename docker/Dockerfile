@@ -29,6 +29,8 @@ RUN pnpm build \
     && PATH="/build/node_modules/.bin:$PATH" pnpm --filter xiaozhi-client \
         --config.inject-workspace-packages=true deploy --prod --offline /out \
     && test -f /out/dist/backend/WebServerLauncher.js \
+    && test -f /out/dist/memory/stdio.js \
+    && test -f /out/dist/memory/cli.js \
     && test -f /out/dist/frontend/index.html
 
 # 保留完整 Node 环境，便于 npx 安装含原生模块的 MCP 服务。
@@ -52,6 +54,7 @@ WORKDIR /app
 COPY --from=build /out/ ./
 COPY --from=build /usr/local/lib/node_modules/pnpm/ /usr/local/lib/node_modules/pnpm/
 COPY docker/templates/ ./docker/templates/
+COPY docker/examples/ ./docker/examples/
 COPY docker/scripts/entrypoint.sh docker/scripts/healthcheck.mjs ./docker/scripts/
 
 # CLI 用于查看版本和管理配置；服务生命周期由 Docker 管理。

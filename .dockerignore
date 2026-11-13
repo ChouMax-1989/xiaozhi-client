@@ -23,6 +23,10 @@ worktrees
 xiaozhi.cache.json
 tool-calls.jsonl
 data
+**/secrets
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
 .xiaozhi-client
 
 # 模板配置必须保留，供首次启动初始化使用。
