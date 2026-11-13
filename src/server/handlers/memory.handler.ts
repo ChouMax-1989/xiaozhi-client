@@ -38,7 +38,10 @@ const messagesSchema = pagingSchema
   .strict();
 const entriesSchema = pagingSchema
   .extend({
-    status: z.enum(["all", "active", "candidate", "inactive"]).optional(),
+    status: z
+      .enum(["all", "active", "candidate", "inactive", "current"])
+      .optional(),
+    category: z.enum(["user_profile", "situational"]).optional(),
   })
   .strict();
 const emptySchema = z.object({}).strict();
@@ -49,6 +52,11 @@ const retireSchema = z
   .object({
     revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     reason: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+const deleteSchema = z
+  .object({
+    revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   })
   .strict();
 
@@ -293,6 +301,16 @@ export class MemoryApiHandler {
         action: "retire",
         id: this.id(c),
         ...(await this.body(c, retireSchema)),
+      })
+    );
+  }
+
+  deleteEntry(c: Context<AppContext>): Promise<Response> {
+    return this.respond(c, async () =>
+      this.service.execute({
+        action: "delete",
+        id: this.id(c),
+        ...(await this.body(c, deleteSchema)),
       })
     );
   }

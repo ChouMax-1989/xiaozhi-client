@@ -55,6 +55,11 @@ export const memoryRoutes: RouteDefinition[] = [
     handler: h((handler, c) => handler.retireEntry(c)),
   },
   {
+    method: "DELETE",
+    path: "/api/memory/entries/:id",
+    handler: h((handler, c) => handler.deleteEntry(c)),
+  },
+  {
     method: "GET",
     path: "/api/memory/summaries",
     handler: h((handler, c) => handler.getList(c, "summaries")),

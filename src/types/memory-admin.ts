@@ -89,6 +89,7 @@ export interface MemoryAdminOverview {
   sync: Record<string, unknown> | null;
   syncJob: MemorySyncJob;
   extractionPrompt: string;
+  recordingPrompt: string;
 }
 
 export interface MemoryCaptureView {
@@ -99,7 +100,12 @@ export interface MemoryCaptureView {
   createdAt: string;
 }
 
-export type MemoryListStatus = "all" | "active" | "candidate" | "inactive";
+export type MemoryListStatus =
+  | "all"
+  | "active"
+  | "candidate"
+  | "inactive"
+  | "current";
 // biome-ignore lint/nursery/useImportRestrictions: 前端复用只含类型的契约，不加载 SQLite。
 export type { MemoryRecord, SummaryRecord } from "../memory/types.js";
 
@@ -117,6 +123,7 @@ export type MemoryAdminRequest =
   | { action: "source"; id: string; revision?: number }
   | {
       action: "memories";
+      category?: "user_profile" | "situational";
       query?: string;
       status?: MemoryListStatus;
       page?: number;
@@ -127,6 +134,7 @@ export type MemoryAdminRequest =
   | { action: "captures" }
   | { action: "operations"; limit?: number }
   | { action: "retire"; id: string; revision: number; reason: string }
+  | { action: "delete"; id: string; revision: number }
   | { action: "undo"; operationId: string }
   | { action: "export" }
   | { action: "backup"; destination: string }

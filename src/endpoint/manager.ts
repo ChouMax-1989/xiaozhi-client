@@ -58,6 +58,8 @@ export class EndpointManager extends EventEmitter {
   private mcpManager: IMCPServiceManager | null = null;
   private sharedMCPAdapter: SharedMCPAdapter | null = null;
   private mcpEventListeners: Array<(...args: unknown[]) => void> = [];
+  private desiredConnections = new Set<string>();
+  private retryTimers = new Map<string, NodeJS.Timeout>();
 
   /**
    * 构造函数
@@ -168,6 +170,18 @@ export class EndpointManager extends EventEmitter {
       initialized: false,
     });
 
+    if (typeof endpoint.setDisconnectHandler === "function") {
+      endpoint.setDisconnectHandler((error) => {
+        const status = this.connectionStates.get(url);
+        if (status) {
+          status.connected = false;
+          status.initialized = false;
+          if (error) status.lastError = error;
+        }
+        this.scheduleReconnect(url);
+      });
+    }
+
     // 发射事件
     this.emit("endpointAdded", { endpoint: url });
   }
@@ -188,6 +202,9 @@ export class EndpointManager extends EventEmitter {
     }
 
     console.debug(`[EndpointManager] 移除接入点: ${sliceEndpoint(url)}`);
+
+    this.stopReconnect(url);
+    endpoint.setDisconnectHandler?.(undefined);
 
     // 断开连接
     await endpoint.disconnect();
@@ -223,6 +240,7 @@ export class EndpointManager extends EventEmitter {
         return;
       }
 
+      this.desiredConnections.add(endpoint);
       await this.connectSingleEndpoint(endpoint, endpointInstance);
       return;
     }
@@ -235,6 +253,7 @@ export class EndpointManager extends EventEmitter {
     const promises: Promise<void>[] = [];
 
     for (const [url, endpoint] of this.endpoints) {
+      this.desiredConnections.add(url);
       const status = this.connectionStates.get(url);
 
       // 跳过已连接的端点
@@ -290,7 +309,8 @@ export class EndpointManager extends EventEmitter {
         throw new Error(`接入点不存在: ${sliceEndpoint(endpoint)}`);
       }
 
-      endpointInstance.disconnect();
+      this.stopReconnect(endpoint);
+      await endpointInstance.disconnect();
 
       const status = this.connectionStates.get(endpoint);
       if (status) {
@@ -308,6 +328,8 @@ export class EndpointManager extends EventEmitter {
     console.debug("[EndpointManager] 开始断开所有连接");
 
     const promises: Promise<void>[] = [];
+
+    for (const url of this.endpoints.keys()) this.stopReconnect(url);
 
     for (const endpoint of this.endpoints.values()) {
       promises.push(
@@ -508,7 +530,27 @@ export class EndpointManager extends EventEmitter {
     status.initialized = false;
 
     // 执行连接
-    await endpoint.connect();
+    try {
+      await endpoint.connect();
+    } catch (error) {
+      status.connected = false;
+      status.initialized = false;
+      status.lastError = error instanceof Error ? error.message : String(error);
+      this.scheduleReconnect(url);
+      throw error;
+    }
+
+    if (
+      !this.desiredConnections.has(url) ||
+      this.endpoints.get(url) !== endpoint
+    ) {
+      await endpoint.disconnect();
+      return;
+    }
+
+    const pendingRetry = this.retryTimers.get(url);
+    if (pendingRetry) clearTimeout(pendingRetry);
+    this.retryTimers.delete(url);
 
     // 更新连接成功状态
     status.connected = true;
@@ -517,6 +559,26 @@ export class EndpointManager extends EventEmitter {
     status.lastError = undefined;
 
     console.info(`[EndpointManager] 端点连接成功: ${sliceEndpoint(url)}`);
+  }
+
+  private stopReconnect(url: string): void {
+    this.desiredConnections.delete(url);
+    const timer = this.retryTimers.get(url);
+    if (timer) clearTimeout(timer);
+    this.retryTimers.delete(url);
+  }
+
+  private scheduleReconnect(url: string): void {
+    if (!this.desiredConnections.has(url) || this.retryTimers.has(url)) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(url);
+      const endpoint = this.endpoints.get(url);
+      if (!endpoint || !this.desiredConnections.has(url)) return;
+      if (endpoint.isConnected()) return;
+      void this.connectSingleEndpoint(url, endpoint).catch(() => {});
+    }, this.config?.defaultReconnectDelay ?? 2000);
+    timer.unref();
+    this.retryTimers.set(url, timer);
   }
 
   /**
@@ -533,8 +595,30 @@ export class EndpointManager extends EventEmitter {
 
     console.debug(`[EndpointManager] 重连端点: ${sliceEndpoint(url)}`);
 
+    this.stopReconnect(url);
+    this.desiredConnections.add(url);
+
     // 执行重连
-    await endpoint.reconnect();
+    status.connected = false;
+    status.initialized = false;
+    try {
+      await endpoint.reconnect();
+    } catch (error) {
+      status.lastError = error instanceof Error ? error.message : String(error);
+      this.scheduleReconnect(url);
+      throw error;
+    }
+
+    if (
+      !this.desiredConnections.has(url) ||
+      this.endpoints.get(url) !== endpoint
+    ) {
+      await endpoint.disconnect();
+      return;
+    }
+    const pendingRetry = this.retryTimers.get(url);
+    if (pendingRetry) clearTimeout(pendingRetry);
+    this.retryTimers.delete(url);
 
     // 更新连接成功状态
     status.connected = true;

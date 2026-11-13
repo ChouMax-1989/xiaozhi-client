@@ -13,6 +13,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import WebSocket from "ws";
+import { isMemoryToolName } from "../mcp-core/index.js";
 import type { ExtendedMCPMessage, MCPMessage } from "./mcp.js";
 import type {
   EndpointConnectionStatus,
@@ -89,6 +90,7 @@ export class Endpoint {
   // 工具调用超时配置
   private toolCallTimeout = 30000;
   private reconnectDelay: number; // 重连延迟（毫秒）
+  private onUnexpectedDisconnect?: (error?: string) => void;
 
   /**
    * 构造函数
@@ -169,6 +171,10 @@ export class Endpoint {
    */
   getUrl(): string {
     return this.endpointUrl;
+  }
+
+  setDisconnectHandler(handler?: (error?: string) => void): void {
+    this.onUnexpectedDisconnect = handler;
   }
 
   /**
@@ -284,6 +290,7 @@ export class Endpoint {
 
     // 清理当前连接
     this.cleanupConnection();
+    this.onUnexpectedDisconnect?.(error.message);
   }
 
   /**
@@ -294,6 +301,7 @@ export class Endpoint {
     this.serverInitialized = false;
     this.connectionState = ConnectionState.DISCONNECTED;
     console.info(`小智连接已关闭 (代码: ${code}, 原因: ${reason})`);
+    this.onUnexpectedDisconnect?.();
   }
 
   /**
@@ -344,11 +352,10 @@ export class Endpoint {
 
     switch (message.method) {
       case "initialize":
-      case "notifications/initialized":
         this.sendResponse(message.id, {
           protocolVersion: "2024-11-05",
           capabilities: {
-            tools: { listChanged: true },
+            tools: { listChanged: false },
             logging: {},
           },
           serverInfo: {
@@ -358,6 +365,10 @@ export class Endpoint {
         });
         this.serverInitialized = true;
         console.debug("MCP 服务器初始化完成");
+        break;
+
+      case "notifications/initialized":
+        this.serverInitialized = true;
         break;
 
       case "tools/list": {
@@ -387,7 +398,11 @@ export class Endpoint {
   /**
    * 发送响应消息
    */
-  private sendResponse(id: number | string, result: unknown): void {
+  private sendResponse(
+    id: number | string,
+    result: unknown,
+    maxBytes?: number
+  ): void {
     // console.debug(
     //   `尝试发送响应: id=${id}, isConnected=${this.connectionStatus}, wsReadyState=${this.ws?.readyState}`
     // );
@@ -398,6 +413,17 @@ export class Endpoint {
         id,
         result,
       };
+      if (maxBytes && Buffer.byteLength(JSON.stringify(response)) > maxBytes) {
+        response.result = {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "记忆响应超过传输上限，未完整送达。请重新读取；写入重试须保持原 requestId，不要重复新建。",
+            },
+          ],
+        };
+      }
 
       try {
         this.ws.send(JSON.stringify(response));
@@ -463,7 +489,7 @@ export class Endpoint {
     console.info(`重连小智接入点: ${sliceEndpoint(this.endpointUrl)}`);
 
     // 先断开连接
-    this.disconnect();
+    await this.disconnect();
 
     // 等待可配置的时间确保连接完全断开
     await new Promise((resolve) => setTimeout(resolve, this.reconnectDelay));
@@ -485,6 +511,14 @@ export class Endpoint {
 
     const requestId = request.id;
     const startTime = Date.now();
+    const memoryCall = isMemoryToolName(
+      (request.params as { name?: unknown } | undefined)?.name
+    );
+    // 为 768 字节工具结果及 JSON-RPC 外层保留空间，不截断请求 ID。
+    if (memoryCall && Buffer.byteLength(JSON.stringify(requestId)) > 128) {
+      this.ws?.close(1009, "Memory request ID exceeds 128 encoded bytes");
+      return;
+    }
 
     try {
       const params = validateToolCallParams(request.params);
@@ -501,12 +535,16 @@ export class Endpoint {
         this.toolCallTimeout
       );
 
-      this.sendResponse(requestId, {
-        content: result.content || [
-          { type: "text", text: JSON.stringify(result) },
-        ],
-        isError: result.isError || false,
-      });
+      this.sendResponse(
+        requestId,
+        {
+          content: result.content || [
+            { type: "text", text: JSON.stringify(result) },
+          ],
+          isError: result.isError || false,
+        },
+        memoryCall ? 1024 : undefined
+      );
 
       console.info("工具调用成功", {
         requestId,
@@ -514,7 +552,12 @@ export class Endpoint {
         duration: `${Date.now() - startTime}ms`,
       });
     } catch (error) {
-      this.handleToolCallError(error, requestId, Date.now() - startTime);
+      this.handleToolCallError(
+        error,
+        requestId,
+        Date.now() - startTime,
+        memoryCall ? 1024 : undefined
+      );
     }
   }
 
@@ -573,7 +616,8 @@ export class Endpoint {
   private handleToolCallError(
     error: unknown,
     requestId: string | number | undefined,
-    duration: number
+    duration: number,
+    maxBytes?: number
   ): void {
     let errorResponse: {
       code: number;
@@ -596,6 +640,18 @@ export class Endpoint {
       };
     }
 
+    if (
+      maxBytes &&
+      Buffer.byteLength(
+        JSON.stringify({ jsonrpc: "2.0", id: requestId, error: errorResponse })
+      ) > maxBytes
+    ) {
+      errorResponse = {
+        code: errorResponse.code,
+        message:
+          "记忆工具调用未完成，请检查参数或服务状态；写入重试须保持原 requestId。",
+      };
+    }
     this.sendErrorResponse(requestId, errorResponse);
 
     console.error("工具调用失败", {

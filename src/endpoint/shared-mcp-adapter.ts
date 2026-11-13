@@ -58,8 +58,8 @@ export class SharedMCPAdapter implements IMCPServiceManager {
    * 从全局 MCPManager 获取工具列表，并转换为增强格式
    */
   getAllTools(): EnhancedToolInfo[] {
-    // 直接使用 IMCPServiceManager 接口的 getAllTools() 方法
-    return this.globalMCPManager.getAllTools();
+    // 管理界面仍可读取全部工具，接入点只向云端提供已启用的工具。
+    return this.globalMCPManager.getAllTools().filter((tool) => tool.enabled);
   }
 
   /**

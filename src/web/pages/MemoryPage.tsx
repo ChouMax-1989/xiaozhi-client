@@ -1,3 +1,5 @@
+import { ManagementPage } from "@/components/management-page";
+import { MemoryCategory } from "@/components/memory/memory-categories";
 import { MemoryChats } from "@/components/memory/memory-chats";
 import {
   MemoryErrorState,
@@ -9,23 +11,15 @@ import {
   type MemorySelection,
 } from "@/components/memory/memory-detail";
 import { MemoryEntries } from "@/components/memory/memory-entries";
+import { MemoryGraph } from "@/components/memory/memory-graph";
 import {
   MemoryOperations,
   MemorySummaries,
 } from "@/components/memory/memory-history";
 import { MemoryRestartHint } from "@/components/memory/memory-restart-hint";
 import { MemorySettings } from "@/components/memory/memory-settings";
-import { SiteHeader } from "@/components/site-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -37,7 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { memoryError, useMemoryResource } from "@/hooks/useMemoryResource";
 import { memoryApi } from "@/services/memoryApi";
-import { Copy, RefreshCw, Settings2 } from "lucide-react";
+import { Copy, MoreHorizontal, RefreshCw, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type {
@@ -69,12 +63,13 @@ function syncDisabledReason(overview: MemoryAdminOverview) {
 
 export default function MemoryPage() {
   const overview = useMemoryResource(memoryApi.overview);
-  const [tab, setTab] = useState("entries");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const [settingsRevision, setSettingsRevision] = useState(0);
   const [selection, setSelection] = useState<MemorySelection | null>(null);
   const [syncStarting, setSyncStarting] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const previousSync = useRef<MemorySyncJob["state"] | null>(null);
   const refreshOverview = overview.refresh;
   const onChanged = useCallback(() => {
@@ -128,273 +123,234 @@ export default function MemoryPage() {
 
   const data = overview.data;
   const ready = data?.ready ?? false;
-  const counts = data?.counts;
   const syncReason = data ? syncDisabledReason(data) : "正在读取服务状态。";
   const lastVerifiedAt =
     typeof data?.sync?.lastVerifiedAt === "string"
       ? data.sync.lastVerifiedAt
       : null;
 
+  const legacyImport = data ? (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
+          disabled={Boolean(syncReason) || syncStarting}
+          onClick={() => void startSync()}
+        >
+          <RefreshCw
+            data-icon="inline-start"
+            className={
+              state === "running" || syncStarting ? "animate-spin" : undefined
+            }
+          />
+          {state === "running" || syncStarting ? "正在同步…" : "导入旧对话"}
+        </Button>
+        <p className="text-sm text-muted-foreground" aria-live="polite">
+          {syncLabels[data.syncJob.state]}
+        </p>
+      </div>
+      {data.syncJob.message ? (
+        <p className="text-sm">{data.syncJob.message}</p>
+      ) : null}
+      {syncReason ? (
+        <p className="text-sm text-muted-foreground">{syncReason}</p>
+      ) : null}
+      {lastVerifiedAt ? (
+        <p className="text-xs text-muted-foreground">
+          上次完整核验：{formatMemoryTime(lastVerifiedAt)}
+        </p>
+      ) : null}
+      {state === "partial" ? (
+        <p className="text-sm text-muted-foreground">
+          已保留进度，可继续导入剩余内容。
+        </p>
+      ) : null}
+    </div>
+  ) : null;
+
   return (
-    <div className="flex min-h-screen min-w-0 flex-col">
-      <SiteHeader title="记忆库" />
-      <main className="mx-auto flex w-full max-w-7xl min-w-0 flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-          <div className="flex flex-col gap-2">
-            <h2 className="text-2xl font-semibold tracking-tight">
-              小智记忆库
-            </h2>
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              查看保存的记忆，追溯每条事实的原话依据，并管理对话同步与本地备份。
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            className="self-start"
-            disabled={overview.loading}
-            onClick={refreshAll}
-          >
-            <RefreshCw
-              data-icon="inline-start"
-              className={overview.loading ? "animate-spin" : undefined}
-            />
-            刷新
-          </Button>
-        </div>
+    <>
+      <ManagementPage
+        title="对话与记忆"
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="刷新"
+              title="刷新"
+              disabled={overview.loading}
+              onClick={refreshAll}
+            >
+              <RefreshCw
+                className={overview.loading ? "animate-spin" : undefined}
+              />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setMoreOpen(true)}>
+              <MoreHorizontal data-icon="inline-start" />
+              更多
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings2 data-icon="inline-start" />
+              设置
+            </Button>
+          </>
+        }
+      >
         {overview.loading && !data ? (
           <MemoryLoading label="正在连接记忆服务…" />
         ) : null}
         {overview.error ? (
           <MemoryErrorState message={overview.error} retry={refreshAll} />
         ) : null}
-        {data ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={ready ? "default" : "outline"}>
-                {ready
-                  ? "记忆服务已就绪"
-                  : data.settings.configured
-                    ? "记忆服务未就绪"
-                    : "记忆服务未配置"}
-              </Badge>
-              <Badge variant="secondary">
-                {data.settings.tokenConfigured
-                  ? "历史凭据已配置"
-                  : "历史凭据未配置"}
-              </Badge>
-              <Badge variant="outline">
-                {data.settings.syncIntervalSeconds > 0
-                  ? `自动同步 · 每 ${data.settings.syncIntervalSeconds} 秒`
-                  : "自动同步已关闭"}
-                {data.settings.restartRequired ? " · 待生效" : ""}
-              </Badge>
-            </div>
-            {data.error ? (
-              <Alert variant="destructive">
-                <AlertTitle>记忆服务需要检查</AlertTitle>
-                <AlertDescription>{data.error}</AlertDescription>
-              </Alert>
-            ) : null}
-            {data.settings.restartRequired && tab !== "settings" ? (
-              <Alert>
-                <AlertTitle>有设置等待重启</AlertTitle>
-                <AlertDescription className="flex flex-col items-start gap-3">
-                  <MemoryRestartHint
-                    containerMode={data.settings.containerMode}
-                  />
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            {counts ? (
-              <section
-                className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-                aria-label="记忆库概况"
+        {data?.error ? (
+          <Alert variant="destructive">
+            <AlertTitle>记忆服务需要检查</AlertTitle>
+            <AlertDescription>{data.error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {data?.settings.restartRequired ? (
+          <Alert>
+            <AlertTitle>有设置等待重启</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-3">
+              <MemoryRestartHint containerMode={data.settings.containerMode} />
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {!ready && !overview.loading ? (
+          <Alert>
+            <AlertTitle>
+              {data?.settings.configured
+                ? "记忆服务尚未就绪"
+                : "先完成记忆服务设置"}
+            </AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-3">
+              <p>
+                {data?.settings.configured
+                  ? "请检查服务状态；刚保存过设置时，重启后再刷新。"
+                  : "关联小智智能体后，即可查看保存的对话和记忆。"}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSettingsOpen(true)}
               >
-                <Card>
-                  <CardHeader>
-                    <CardDescription>生效中的记忆</CardDescription>
-                    <CardTitle>{counts.activeMemories}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      全部状态共 {counts.memories} 条
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardDescription>待整理的原文</CardDescription>
-                    <CardTitle>{counts.pendingMessages}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      同步完成后，可交给小智整理
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardDescription>已同步的会话</CardDescription>
-                    <CardTitle>{counts.chats}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      共 {counts.messages} 条原文消息
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardDescription>候选与摘要</CardDescription>
-                    <CardTitle>
-                      {counts.candidates} / {counts.summaries}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      另有 {counts.provisionalCaptures} 条暂存待核验
-                    </p>
-                  </CardContent>
-                </Card>
-              </section>
-            ) : null}
-            <Card>
-              <CardHeader>
-                <CardTitle>从对话到记忆</CardTitle>
-                <CardDescription>
-                  先同步官方历史，再在小智聊天中整理。整理会使用你当前的小智模型，通过
-                  MCP 读取原话并记录有依据的记忆，无需另接付费模型。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={Boolean(syncReason) || syncStarting}
-                    onClick={() => void startSync()}
-                  >
-                    <RefreshCw
-                      data-icon="inline-start"
-                      className={
-                        state === "running" || syncStarting
-                          ? "animate-spin"
-                          : undefined
-                      }
-                    />
-                    {state === "running" || syncStarting
-                      ? "正在同步…"
-                      : "同步对话历史"}
-                  </Button>
-                  <Button
-                    disabled={!ready || !data.extractionPrompt}
-                    onClick={() => void copyPrompt()}
-                  >
-                    <Copy data-icon="inline-start" />
-                    复制整理提示
-                  </Button>
-                  <Button variant="ghost" onClick={() => setTab("settings")}>
-                    <Settings2 data-icon="inline-start" />
-                    打开设置
-                  </Button>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  复制后，粘贴到小智聊天中发送。这里不会在后台自动调用模型或自动批准候选内容。
-                </p>
-                <div className="flex flex-col gap-1 text-sm" aria-live="polite">
-                  <p>
-                    {syncLabels[data.syncJob.state]}
-                    {data.syncJob.message ? `：${data.syncJob.message}` : ""}
-                  </p>
-                  {syncReason ? (
-                    <p className="text-muted-foreground">{syncReason}</p>
-                  ) : null}
-                  {data.syncJob.finishedAt ? (
-                    <p className="text-muted-foreground">
-                      本轮结束：{formatMemoryTime(data.syncJob.finishedAt)}
-                    </p>
-                  ) : null}
-                  {lastVerifiedAt ? (
-                    <p className="text-muted-foreground">
-                      上次完整核验：{formatMemoryTime(lastVerifiedAt)}
-                    </p>
-                  ) : null}
-                  {state === "partial" ? (
-                    <p className="text-muted-foreground">
-                      已保留同步进度，可以继续同步完成剩余内容。
-                    </p>
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
+                前往设置
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {ready ? (
+          <>
+            <section
+              aria-label="对话记录"
+              className="flex min-w-0 flex-col gap-3"
+            >
+              <h3 className="text-base font-semibold">对话记录</h3>
+              <MemoryChats revision={revision} />
+            </section>
+            <section
+              aria-label="提炼记忆"
+              className="flex min-w-0 flex-col gap-6 pb-6 pt-3"
+            >
+              <div className="flex items-center justify-between gap-3 border-b pb-3">
+                <h2 className="text-lg font-semibold">提炼记忆</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!data?.extractionPrompt}
+                  onClick={() => void copyPrompt()}
+                  aria-label="复制整理提示"
+                  title="复制后粘贴到小智聊天，整理已有原文"
+                >
+                  <Copy data-icon="inline-start" />
+                  复制整理提示
+                </Button>
+              </div>
+              <MemoryCategory
+                category="user_profile"
+                title="用户画像"
+                revision={revision}
+                onSelect={setSelection}
+                onChanged={onChanged}
+              />
+              <MemoryCategory
+                category="situational"
+                title="情境记忆"
+                revision={revision}
+                onSelect={setSelection}
+                onChanged={onChanged}
+              />
+              <MemoryGraph revision={revision} onSelect={setSelection} />
+            </section>
           </>
         ) : null}
-        <Tabs value={tab} onValueChange={setTab} className="min-w-0">
-          <div className="overflow-x-auto pb-1">
-            <TabsList
-              className="w-max min-w-full justify-start sm:min-w-0"
-              aria-label="记忆库管理"
-            >
-              <TabsTrigger value="entries">记忆</TabsTrigger>
-              <TabsTrigger value="chats">对话原文</TabsTrigger>
-              <TabsTrigger value="summaries">摘要</TabsTrigger>
-              <TabsTrigger value="operations">操作记录</TabsTrigger>
-              <TabsTrigger value="settings">设置</TabsTrigger>
+      </ManagementPage>
+      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+        <DialogContent className="memory-workspace max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>更多记忆管理</DialogTitle>
+            <DialogDescription>
+              查看全部状态、摘要与可撤销的操作。
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue="entries" className="min-w-0">
+            <TabsList className="w-full" aria-label="更多记忆管理">
+              <TabsTrigger className="flex-1" value="entries">
+                全部记忆
+              </TabsTrigger>
+              <TabsTrigger className="flex-1" value="summaries">
+                摘要
+              </TabsTrigger>
+              <TabsTrigger className="flex-1" value="operations">
+                操作记录
+              </TabsTrigger>
             </TabsList>
-          </div>
-          {!ready && tab !== "settings" && !overview.loading ? (
-            <Alert className="mt-4">
-              <AlertTitle>
-                {data?.settings.configured
-                  ? "记忆服务尚未就绪"
-                  : "先完成记忆服务设置"}
-              </AlertTitle>
-              <AlertDescription className="flex flex-col items-start gap-3">
-                <p>
-                  {data?.settings.configured
-                    ? "请检查服务状态；如果刚保存过设置，重启服务后再刷新。"
-                    : "填写小智智能体 ID 并保存，再配置官方历史访问凭据，即可同步对话。"}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setTab("settings")}
-                >
-                  前往设置
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <TabsContent value="entries" className="mt-5">
-            {ready ? (
-              <MemoryEntries revision={revision} onSelect={setSelection} />
-            ) : null}
-          </TabsContent>
-          <TabsContent value="chats" className="mt-5">
-            {ready ? <MemoryChats revision={revision} /> : null}
-          </TabsContent>
-          <TabsContent value="summaries" className="mt-5">
-            {ready ? (
-              <MemorySummaries revision={revision} onSelect={setSelection} />
-            ) : null}
-          </TabsContent>
-          <TabsContent value="operations" className="mt-5">
-            {ready ? (
-              <MemoryOperations
-                revision={revision}
-                onChanged={onChanged}
-                onSelect={setSelection}
-              />
-            ) : null}
-          </TabsContent>
-          <TabsContent value="settings" className="mt-5">
-            <MemorySettings
-              key={settingsRevision}
-              ready={ready}
-              onChanged={onChanged}
-            />
-          </TabsContent>
-        </Tabs>
-      </main>
+            <TabsContent value="entries">
+              {ready ? (
+                <MemoryEntries
+                  revision={revision}
+                  onSelect={setSelection}
+                  onChanged={onChanged}
+                />
+              ) : null}
+            </TabsContent>
+            <TabsContent value="summaries">
+              {ready ? (
+                <MemorySummaries revision={revision} onSelect={setSelection} />
+              ) : null}
+            </TabsContent>
+            <TabsContent value="operations">
+              {ready ? (
+                <MemoryOperations
+                  revision={revision}
+                  onChanged={onChanged}
+                  onSelect={setSelection}
+                />
+              ) : null}
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="memory-workspace max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>记忆设置</DialogTitle>
+            <DialogDescription>管理本地档案、身份与备份。</DialogDescription>
+          </DialogHeader>
+          <MemorySettings
+            key={settingsRevision}
+            ready={ready}
+            onChanged={onChanged}
+            legacyImport={legacyImport}
+            recordingPrompt={data?.recordingPrompt ?? ""}
+          />
+        </DialogContent>
+      </Dialog>
       <MemoryDetailSheet
         key={
           selection
@@ -422,6 +378,6 @@ export default function MemoryPage() {
           />
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

@@ -155,6 +155,7 @@ describe("记忆库管理交互", () => {
         onCredentialSaved={onCredentialSaved}
       />
     );
+    await user.click(screen.getByText("高级设置"));
     const input = screen.getByLabelText("替换访问 Token");
     expect(input).toHaveAttribute("type", "password");
     await user.type(input, "example-test-token");
@@ -207,6 +208,58 @@ describe("记忆库管理交互", () => {
     ).toBeInTheDocument();
   });
 
+  it("高级导入选项通过关联表单保存，导出和备份保持独立", async () => {
+    const save = vi
+      .spyOn(memoryApi, "saveSettings")
+      .mockResolvedValue(settings);
+    const exportData = vi
+      .spyOn(memoryApi, "export")
+      .mockResolvedValue(undefined);
+    const createBackup = vi
+      .spyOn(memoryApi, "backup")
+      .mockResolvedValue({ fileName: "test.sqlite", bytes: 4096 });
+    const downloadBackup = vi
+      .spyOn(memoryApi, "downloadBackup")
+      .mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <MemorySettingsForm
+        settings={settings}
+        ready
+        onSaved={vi.fn()}
+        onCredentialSaved={vi.fn()}
+      />
+    );
+    await user.click(screen.getByText("高级设置"));
+    await user.click(screen.getByLabelText("自动同步对话历史"));
+    const intervalInput = screen.getByLabelText(
+      "同步间隔（秒）"
+    ) as HTMLInputElement;
+    const limitInput = screen.getByLabelText(
+      "每轮请求上限"
+    ) as HTMLInputElement;
+    expect(intervalInput.form?.id).toBe("memory-settings-form");
+    expect(limitInput.form?.id).toBe("memory-settings-form");
+    fireEvent.change(intervalInput, { target: { value: "600" } });
+    fireEvent.change(limitInput, { target: { value: "25" } });
+    await user.click(screen.getByRole("button", { name: "保存导入选项" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith({
+        agentId: settings.agentId,
+        ownerId: settings.ownerId,
+        syncIntervalSeconds: 600,
+        syncMaxRequests: 25,
+      })
+    );
+    await user.click(screen.getByRole("button", { name: "导出完整 JSON" }));
+    await waitFor(() => expect(exportData).toHaveBeenCalledOnce());
+    await user.click(screen.getByRole("button", { name: "创建并下载备份" }));
+    await waitFor(() => expect(createBackup).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(downloadBackup).toHaveBeenCalledWith("test.sqlite")
+    );
+  });
+
   it("容器部署显示 NAS 和 Compose 重启指引，不提供本机重启按钮", () => {
     render(
       <MemorySettingsForm
@@ -240,6 +293,7 @@ describe("记忆库管理交互", () => {
         onCredentialSaved={vi.fn()}
       />
     );
+    await user.click(screen.getByText("高级设置"));
     await user.click(screen.getByLabelText("自动同步对话历史"));
     fireEvent.change(screen.getByLabelText("同步间隔（秒）"), {
       target: { value: "30" },
@@ -342,6 +396,32 @@ describe("记忆库管理交互", () => {
     expect(
       screen.queryByRole("button", { name: "停用这条记忆" })
     ).not.toBeInTheDocument();
+  });
+
+  it("记忆依据详情保留模型提交来源和拟回复标识", async () => {
+    vi.spyOn(memoryApi, "detail").mockResolvedValue({
+      ...detail,
+      sources: detail.sources.map((source) => ({
+        ...source,
+        message: source.message
+          ? {
+              ...source.message,
+              origin: "model_reported",
+              role: "assistant",
+              assistantStage: "draft",
+            }
+          : null,
+      })),
+    });
+    render(
+      <MemoryDetailSheet
+        selection={{ id: memory.id }}
+        onClose={vi.fn()}
+        onChanged={vi.fn()}
+      />
+    );
+    expect(await screen.findByText("模型提交 · 拟回复")).toBeInTheDocument();
+    expect(screen.getByText("我喜欢喝无糖绿茶。")).toBeInTheDocument();
   });
 
   it("只为可撤销的操作提供确认入口，并在成功后刷新", async () => {

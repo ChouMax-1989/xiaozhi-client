@@ -48,7 +48,10 @@ const requestSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("memories"),
-      status: z.enum(["all", "active", "candidate", "inactive"]).optional(),
+      status: z
+        .enum(["all", "active", "candidate", "inactive", "current"])
+        .optional(),
+      category: z.enum(["user_profile", "situational"]).optional(),
       ...paginationShape,
     })
     .strict(),
@@ -59,6 +62,13 @@ const requestSchema = z.discriminatedUnion("action", [
     .object({
       action: z.literal("operations"),
       limit: z.number().int().min(1).max(100).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("delete"),
+      id: identifierSchema,
+      revision: revisionSchema,
     })
     .strict(),
   z
@@ -105,6 +115,9 @@ function sourceView(
     sourceId: source.sourceId,
     revision: source.revision,
     processedRevision: source.processedRevision,
+    origin: source.origin ?? "archive",
+    ...(source.assistantStage ? { assistantStage: source.assistantStage } : {}),
+    ...(source.recordedAt ? { recordedAt: source.recordedAt } : {}),
   };
 }
 
@@ -181,6 +194,7 @@ export async function executeAdminRequest(
         data = store.listMemories({
           query: input.query,
           status: input.status,
+          category: input.category,
           page: input.page,
           pageSize: input.pageSize,
         });
@@ -199,6 +213,9 @@ export async function executeAdminRequest(
         break;
       case "retire":
         data = store.retire(input.id, input.revision, input.reason);
+        break;
+      case "delete":
+        data = store.deleteMemory(input.id, input.revision);
         break;
       case "undo":
         data = store.undo(input.operationId);

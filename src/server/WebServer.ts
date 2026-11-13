@@ -362,32 +362,26 @@ export class WebServer {
 
       // 2. 只有在有有效端点时才创建并添加端点
       if (validEndpoints.length > 0) {
-        this.logger.debug("有效端点列表:", validEndpoints);
+        this.logger.debug(`有效端点数量: ${validEndpoints.length}`);
 
         // 直接使用 URL 字符串添加端点（新 API）
         for (const endpointUrl of validEndpoints) {
           this.endpointManager.addEndpoint(endpointUrl);
-          this.logger.debug(`✅ 已添加端点: ${endpointUrl}`);
+          this.logger.debug("✅ 已添加小智接入点");
         }
 
         // 连接所有端点
         await this.endpointManager.connect();
 
         // 设置端点添加事件监听器
-        this.endpointManager.on(
-          "endpointAdded",
-          (event: { endpoint: string }) => {
-            this.logger.debug(`端点已添加: ${event.endpoint}`);
-          }
-        );
+        this.endpointManager.on("endpointAdded", () => {
+          this.logger.debug("小智接入点已添加");
+        });
 
         // 设置端点移除事件监听器
-        this.endpointManager.on(
-          "endpointRemoved",
-          (event: { endpoint: string }) => {
-            this.logger.debug(`端点已移除: ${event.endpoint}`);
-          }
-        );
+        this.endpointManager.on("endpointRemoved", () => {
+          this.logger.debug("小智接入点已移除");
+        });
 
         this.logger.debug(
           `小智接入点连接管理器初始化完成，管理 ${validEndpoints.length} 个端点`

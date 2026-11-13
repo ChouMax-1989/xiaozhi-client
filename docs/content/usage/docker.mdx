@@ -5,6 +5,8 @@ description: "从当前源码构建 Docker 镜像，在家中运行 MCP 和 WebU
 
 # 使用 Docker 部署
 
+本仓库新增的记忆功能请同时参考 [NAS 记忆部署手册](../../nas-memory-deployment.md)和[角色追加规则](../../xiaozhi-role-memory-rules.md)，其中包含当前应使用的分支、数据库迁移和接入检查。本次只提供说明，不表示已在家庭 NAS 部署或完成真实语音验收。
+
 本方案在家中的电脑、NAS 或小主机上运行 MCP 客户端和 WebUI。设备继续连接小智官方服务端，在官方控制台选择的 DeepSeek、语音识别和语音合成服务仍由官方提供。家里的容器通过官方 MCP 接入点连接，只需配置 MCP 工具，无需填写本地 LLM、ASR 或 TTS 密钥，也无需修改设备的服务器地址。
 
 镜像从**当前检出的源码和 `pnpm-lock.yaml`** 构建，包含对应的后端、CLI 和 WebUI。修改源码或合并分支后重新构建，容器就会运行这些修改。构建过程中不再从 npm 安装另一个版本的 `xiaozhi-client`。

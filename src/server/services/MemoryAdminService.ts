@@ -23,7 +23,10 @@ import {
   configManager,
 } from "../../config/index.js";
 import { checkClientBinding } from "../../memory/config.js";
-import { MEMORY_EXTRACTION_RULES } from "../../memory/prompts.js";
+import {
+  MEMORY_EXTRACTION_RULES,
+  MEMORY_RECORDING_RULES,
+} from "../../memory/prompts.js";
 import type {
   MemoryAdminCounts,
   MemoryAdminOverview,
@@ -140,6 +143,9 @@ function memoryEntry(file: "admin.js" | "stdio.js"): string {
 }
 
 const SAFE_WORKER_ERRORS = new Set([
+  "记忆不存在或已删除。",
+  "目标记忆版本已改变，请刷新后重试。",
+  "该请求涉及已删除记忆，不能重试恢复。",
   "目标记忆不存在或版本已改变，请刷新后重试。",
   "这条记忆已不再生效，无需重复停用。",
   "该操作不存在或不支持撤销",
@@ -526,6 +532,7 @@ export class MemoryAdminService {
       sync: null,
       syncJob: this.getSyncJob(),
       extractionPrompt: MEMORY_EXTRACTION_RULES,
+      recordingPrompt: MEMORY_RECORDING_RULES,
     };
     if (!overview.settings.configured) return overview;
     try {

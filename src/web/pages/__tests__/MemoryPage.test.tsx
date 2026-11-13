@@ -21,6 +21,13 @@ vi.mock("@/components/memory/memory-entries", () => ({
   MemoryEntries: () => <p>记忆列表</p>,
 }));
 
+vi.mock("@/components/memory/memory-chats", () => ({
+  MemoryChats: () => <p>对话记录列表</p>,
+}));
+vi.mock("@/components/memory/memory-categories", () => ({
+  MemoryCategory: ({ title }: { title: string }) => <p>{title}</p>,
+}));
+
 const overview: MemoryAdminOverview = {
   settings: {
     configured: true,
@@ -49,10 +56,14 @@ const overview: MemoryAdminOverview = {
   sync: null,
   syncJob: { state: "idle", startedAt: null, finishedAt: null, message: null },
   extractionPrompt: "请依据原话整理记忆。",
+  recordingPrompt: "追加角色规则：调用当前工具记录每轮对话。",
 };
 
 describe("记忆页面同步状态", () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(memoryApi, "settings").mockResolvedValue(overview.settings);
+  });
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
@@ -81,7 +92,11 @@ describe("记忆页面同步状态", () => {
     });
     expect(getOverview).toHaveBeenCalledTimes(1);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "同步对话历史" }));
+      fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    });
+    fireEvent.click(screen.getByText("高级设置"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导入旧对话" }));
     });
     expect(getOverview).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "正在同步…" })).toBeDisabled();
@@ -107,8 +122,18 @@ describe("记忆页面同步状态", () => {
     await act(async () => {
       render(<MemoryPage />);
     });
-    expect(screen.getByRole("button", { name: "同步对话历史" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "复制整理提示" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "导入旧对话" })
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    });
+    expect(screen.getByText("高级设置").closest("details")).not.toHaveAttribute(
+      "open"
+    );
+    fireEvent.click(screen.getByText("高级设置"));
+    expect(screen.getByRole("button", { name: "导入旧对话" })).toBeDisabled();
     expect(
       screen.getByText(/自动同步已开启，由服务按间隔同步/)
     ).toBeInTheDocument();

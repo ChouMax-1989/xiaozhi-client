@@ -380,11 +380,12 @@ export function McpEndpointSettingButton() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="icon" className="size-8">
+        <Button variant="outline" size="sm">
           <SettingsIcon className="size-4" />
+          接入点设置
         </Button>
       </DialogTrigger>
-      <DialogContent className="min-w-[600px] max-w-[800px] max-h-[80vh] overflow-y-auto">
+      <DialogContent className="min-w-0 max-w-[800px] grid-cols-[minmax(0,1fr)] max-h-[80dvh] overflow-y-auto">
         <DialogHeader className="mb-4">
           <DialogTitle>配置小智服务端接入点</DialogTitle>
           <DialogDescription>
@@ -400,10 +401,10 @@ export function McpEndpointSettingButton() {
             return (
               <div
                 key={item}
-                className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-slate-50 rounded-md font-mono gap-3 transition-all duration-200 hover:bg-slate-100"
+                className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-muted/50 rounded-md font-mono gap-3 transition-colors hover:bg-muted"
               >
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 flex-1 min-w-0">
-                  <span className="flex-1 text-ellipsis overflow-hidden whitespace-nowrap text-sm sm:text-base">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 flex-1 min-w-0 w-full">
+                  <span className="min-w-0 max-w-full flex-1 text-ellipsis overflow-hidden whitespace-nowrap text-sm sm:text-base">
                     {sliceEndpoint(item)}
                   </span>
                   {/* 连接状态显示 */}

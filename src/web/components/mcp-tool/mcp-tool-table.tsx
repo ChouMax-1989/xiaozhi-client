@@ -306,7 +306,7 @@ export function McpToolTable({
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       {/* 排序选择器和搜索框 */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-4">
         <ToolSortSelector value={sortConfig} onChange={setSortConfig} />
         <ToolSearchInput
           value={searchValue}
@@ -332,7 +332,7 @@ export function McpToolTable({
       )}
 
       {/* 表格容器 */}
-      <div className="rounded-md border">
+      <div className="management-panel min-w-0 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="flex flex-col items-center gap-2">
@@ -409,6 +409,7 @@ export function McpToolTable({
                     <TableCell>
                       <div className="flex justify-end">
                         <Switch
+                          aria-label={`启用工具 ${tool.toolName}`}
                           checked={tool.enabled}
                           onCheckedChange={(checked) =>
                             handleToggleTool(tool.name, !checked)

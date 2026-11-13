@@ -46,7 +46,7 @@ export function SiteHeader({ title }: { title: string }) {
           rel="noopener noreferrer"
           aria-label="加入 QQ 交流群"
         >
-          <QQIcon size={24} className="text-slate-800" fill="currentColor" />
+          <QQIcon size={24} className="text-foreground" fill="currentColor" />
         </a>
         <a
           href="https://github.com/shenjingnan/xiaozhi-client"
@@ -56,7 +56,7 @@ export function SiteHeader({ title }: { title: string }) {
         >
           <GithubIcon
             size={24}
-            className="text-slate-800"
+            className="text-foreground"
             fill="currentColor"
           />
         </a>

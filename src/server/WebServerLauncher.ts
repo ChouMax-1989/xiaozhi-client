@@ -5,24 +5,23 @@
  * 用于后台模式启动，替代原有的 adaptiveMCPPipe 启动方式
  */
 
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
 // 动态导入避免 CLI 代码执行
 async function importModules() {
   const webServerModule = await import("./WebServer.js");
-  const configModule = await import("../config/index.js");
   const loggerModule = await import("./Logger.js");
   return {
     WebServer: webServerModule.WebServer,
-    configManager: configModule.configManager,
     logger: loggerModule.logger,
   };
 }
 
 async function main() {
-  const args = process.argv.slice(2);
-
   try {
     // 动态导入模块
-    const { WebServer, configManager, logger } = await importModules();
+    const { WebServer, logger } = await importModules();
 
     // 初始化日志
     if (process.env.XIAOZHI_CONFIG_DIR) {
@@ -52,6 +51,9 @@ async function main() {
 }
 
 // 检查是否为直接执行
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
   main();
 }

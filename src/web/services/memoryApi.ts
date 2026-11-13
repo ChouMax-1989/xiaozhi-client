@@ -112,7 +112,10 @@ export const memoryApi = {
       { signal }
     ),
   entries: (
-    input: PageInput & { status: MemoryListStatus },
+    input: PageInput & {
+      status: MemoryListStatus;
+      category?: "user_profile" | "situational";
+    },
     signal?: AbortSignal
   ) =>
     request<MemoryPage<MemoryRecord>>(`/entries?${queryString({ ...input })}`, {
@@ -126,6 +129,11 @@ export const memoryApi = {
     request<{ operationId: string; memory: MemoryRecord }>(
       `/entries/${encodeURIComponent(id)}/retire`,
       { method: "POST", body: JSON.stringify({ revision, reason }) }
+    ),
+  delete: (id: string, revision: number) =>
+    request<{ deleted: true; id: string }>(
+      `/entries/${encodeURIComponent(id)}`,
+      { method: "DELETE", body: JSON.stringify({ revision }) }
     ),
   summaries: (signal?: AbortSignal) =>
     request<SummaryRecord[]>("/summaries", { signal }),

@@ -101,6 +101,64 @@ const createMockMCPManager = (
   cleanup: vi.fn(async () => {}),
 });
 
+describe("记忆工具传输帧边界", () => {
+  it.each([false, true])(
+    "超长结果或错误不会发出超过1024字节的帧：%s",
+    async (throws) => {
+      const call = vi.fn(async () => {
+        if (throws) throw new Error("合成超长错误".repeat(1000));
+        return {
+          content: [{ type: "text", text: "合成超长结果".repeat(1000) }],
+        };
+      });
+      const endpoint = new Endpoint(
+        "ws://localhost:3000/test",
+        createMockMCPManager(call)
+      );
+      await endpoint.connect();
+      const ws = (endpoint as any).ws;
+      const send = vi.spyOn(ws, "send");
+      const id = '"'.repeat(63); // JSON 编码恰好128字节。
+      await (endpoint as any).handleToolCall({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "memory__memory_read_result", arguments: {} },
+      });
+      expect(call).toHaveBeenCalledOnce();
+      const frame = String(send.mock.calls[0][0]);
+      expect(Buffer.byteLength(frame)).toBeLessThanOrEqual(1024);
+      const response = JSON.parse(frame);
+      expect(response.id).toBe(id);
+      expect(response.error || response.result.isError).toBeTruthy();
+      expect(frame).not.toContain("合成超长");
+      await endpoint.disconnect();
+    }
+  );
+
+  it("无法在字节预算内回显的请求ID在执行前拒绝，不截断ID或执行写入", async () => {
+    const call = vi.fn();
+    const endpoint = new Endpoint(
+      "ws://localhost:3000/test",
+      createMockMCPManager(call)
+    );
+    await endpoint.connect();
+    const ws = (endpoint as any).ws;
+    const close = vi.spyOn(ws, "close");
+    const send = vi.spyOn(ws, "send");
+    await (endpoint as any).handleToolCall({
+      jsonrpc: "2.0",
+      id: "中".repeat(100),
+      method: "tools/call",
+      params: { name: "memory__memory_record_turn", arguments: {} },
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith(1009, expect.any(String));
+    await endpoint.disconnect();
+  });
+});
+
 describe("Endpoint", () => {
   let endpoint: Endpoint;
   let mockMCPManager: IMCPServiceManager;

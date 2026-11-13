@@ -5,6 +5,8 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { configManager } from "../../../../config/index.js";
+import { SharedMCPAdapter } from "../../../../endpoint/shared-mcp-adapter.js";
 import { logger } from "../../../Logger.js";
 import { MCPServiceManager } from "../../../lib/mcp";
 import type { ToolCallResult, ToolInfo } from "../../../lib/mcp/types";
@@ -51,6 +53,7 @@ vi.mock("../../../../config/index.js", () => ({
       maxRecords: 100,
     }),
     getConfigDir: vi.fn().mockReturnValue("/tmp"),
+    isToolEnabled: vi.fn().mockReturnValue(true),
   },
 }));
 
@@ -741,6 +744,56 @@ describe("MCPServiceManager - callTool 编排流程", () => {
       `未找到工具: ${toolName}`
     );
   });
+
+  it("停用的标准工具不能通过直接调用绕过列表", async () => {
+    const internals = serviceManager as unknown as PrivacyTestInternals;
+    const call = vi.fn().mockResolvedValue({ content: [] });
+    internals.services.set("svc", {
+      isConnected: () => true,
+      callTool: call,
+      disconnect: async () => {},
+    });
+    internals.tools.set("svc__tool", {
+      serviceName: "svc",
+      originalName: "tool",
+      tool: { name: "tool", inputSchema: { type: "object" } },
+    });
+    vi.mocked(configManager.isToolEnabled).mockReturnValueOnce(false);
+    await expect(serviceManager.callTool("svc__tool", {})).rejects.toThrow(
+      /停用|禁用/
+    );
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("工具返回 isError 时记录失败统计", async () => {
+    mockCustomMCPHandler.hasTool.mockReturnValue(true);
+    mockCustomMCPHandler.getToolInfo.mockReturnValue({
+      name: "custom",
+      description: "",
+      inputSchema: { type: "object" },
+      handler: { type: "coze", config: {} },
+    });
+    mockCustomMCPHandler.callTool.mockResolvedValue({
+      content: [],
+      isError: true,
+    });
+    const stats = vi.spyOn(serviceManager, "updateToolStatsSafe" as any);
+    await serviceManager.callTool("custom", {});
+    expect(stats).toHaveBeenCalledWith("custom", "customMCP", "custom", false);
+  });
+});
+
+describe("SharedMCPAdapter 工具发现", () => {
+  it("只暴露已启用工具，原管理列表仍保留全部工具", () => {
+    const tools = [
+      { name: "on", enabled: true },
+      { name: "off", enabled: false },
+    ];
+    const manager = { getAllTools: () => tools };
+    const adapter = new SharedMCPAdapter(manager as any);
+    expect(adapter.getAllTools().map((tool) => tool.name)).toEqual(["on"]);
+    expect(manager.getAllTools()).toHaveLength(2);
+  });
 });
 
 describe("MCPServiceManager - 记忆工具别名的日志隔离", () => {
@@ -753,6 +806,7 @@ describe("MCPServiceManager - 记忆工具别名的日志隔离", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     manager = new MCPServiceManager();
+    vi.mocked(configManager.isToolEnabled).mockReturnValue(true);
     internals = manager as unknown as PrivacyTestInternals;
     custom = vi.mocked(manager.getCustomMCPHandler());
     custom.hasTool = vi.fn();

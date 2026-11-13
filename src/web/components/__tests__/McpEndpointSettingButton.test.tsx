@@ -124,15 +124,15 @@ describe("McpEndpointSettingButton", () => {
     it("应该正确渲染设置按钮", () => {
       render(<McpEndpointSettingButton />);
 
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       expect(settingsButton).toBeInTheDocument();
-      expect(settingsButton).toHaveClass("size-8");
+      expect(settingsButton).toHaveTextContent("接入点设置");
     });
 
     it("点击设置按钮应该打开对话框", async () => {
       render(<McpEndpointSettingButton />);
 
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -147,7 +147,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -169,7 +169,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -187,7 +187,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -202,7 +202,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -221,7 +221,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -251,7 +251,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -284,7 +284,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -308,7 +308,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -369,7 +369,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -399,7 +399,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -421,7 +421,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -443,7 +443,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -489,7 +489,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -525,7 +525,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -555,7 +555,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -578,7 +578,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -615,7 +615,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -643,7 +643,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -674,7 +674,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -697,7 +697,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -731,7 +731,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -769,7 +769,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -802,7 +802,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -834,7 +834,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -868,7 +868,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -904,7 +904,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -922,7 +922,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -937,7 +937,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -952,7 +952,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -971,7 +971,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });
@@ -989,7 +989,7 @@ describe("McpEndpointSettingButton", () => {
       render(<McpEndpointSettingButton />);
 
       // 打开对话框
-      const settingsButton = screen.getByRole("button", { name: "" });
+      const settingsButton = screen.getByRole("button", { name: "接入点设置" });
       await act(async () => {
         fireEvent.click(settingsButton);
       });

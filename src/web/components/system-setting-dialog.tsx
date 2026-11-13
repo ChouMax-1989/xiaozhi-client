@@ -141,8 +141,9 @@ export function SystemSettingDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="icon" className="size-8">
-          <SettingsIcon className="size-4" />
+        <Button variant="outline" size="sm">
+          <SettingsIcon data-icon="inline-start" />
+          系统设置
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[600px]">
