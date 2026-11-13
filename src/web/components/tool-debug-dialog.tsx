@@ -453,8 +453,10 @@ export function ToolDebugDialog({
 
   // 创建动态 schema
   const formSchema = useMemo(() => {
-    if (!tool?.inputSchema) return z.object({});
-    return createZodSchemaFromJsonSchema(tool.inputSchema);
+    const schema = tool?.inputSchema
+      ? createZodSchemaFromJsonSchema(tool.inputSchema)
+      : z.object({});
+    return z.preprocess((values: Record<string, unknown>) => values, schema);
   }, [tool?.inputSchema]);
 
   // 创建默认值
@@ -465,7 +467,7 @@ export function ToolDebugDialog({
 
   // 初始化表单
   const form = useForm({
-    resolver: zodResolver(formSchema as z.ZodType<Record<string, unknown>>),
+    resolver: zodResolver(formSchema),
     defaultValues,
     mode: "onChange",
   });
