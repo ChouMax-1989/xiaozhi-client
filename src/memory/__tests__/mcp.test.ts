@@ -8,7 +8,10 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkClientBinding } from "../config.js";
 import { createMemoryServer } from "../mcp.js";
-import { MEMORY_EXTRACTION_RULES, MEMORY_RECORDING_RULES } from "../prompts.js";
+import {
+  MEMORY_EXTRACTION_RULES,
+  MEMORY_SERVER_INSTRUCTIONS,
+} from "../prompts.js";
 import { MemoryStore } from "../store.js";
 import type {
   ArchiveMessage,
@@ -581,10 +584,10 @@ describe("本地记忆 MCP 真实协议集成", () => {
   });
 
   it("按绑定身份记录模型自报并拒绝篡改和无效参数", async () => {
-    expect(MEMORY_RECORDING_RULES).toContain(
+    expect(MEMORY_SERVER_INSTRUCTIONS).toContain(
       "memory_search(includeCandidates:true)"
     );
-    expect(MEMORY_RECORDING_RULES).toContain("不能当作已确认事实");
+    expect(MEMORY_SERVER_INSTRUCTIONS).toContain("候选只作线索");
     expect(MEMORY_EXTRACTION_RULES).toContain("接收时间不等于发言时间");
     const tool = (await client.listTools()).tools.find(
       (item) => item.name === "memory_read_sources"

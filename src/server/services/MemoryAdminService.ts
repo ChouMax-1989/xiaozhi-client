@@ -25,7 +25,7 @@ import {
 import { checkClientBinding } from "../../memory/config.js";
 import {
   MEMORY_EXTRACTION_RULES,
-  MEMORY_RECORDING_RULES,
+  memoryRolePrompt,
 } from "../../memory/prompts.js";
 import type {
   MemoryAdminCounts,
@@ -524,15 +524,16 @@ export class MemoryAdminService {
   }
 
   async getOverview(): Promise<MemoryAdminOverview> {
+    const settings = this.getSettings();
     const overview: MemoryAdminOverview = {
-      settings: this.getSettings(),
+      settings,
       ready: false,
       error: null,
       counts: null,
       sync: null,
       syncJob: this.getSyncJob(),
       extractionPrompt: MEMORY_EXTRACTION_RULES,
-      recordingPrompt: MEMORY_RECORDING_RULES,
+      recordingPrompt: memoryRolePrompt(settings.serviceName),
     };
     if (!overview.settings.configured) return overview;
     try {

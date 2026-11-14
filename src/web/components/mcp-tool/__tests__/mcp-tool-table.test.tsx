@@ -113,7 +113,9 @@ describe("McpToolTable", () => {
       });
 
       // 输入搜索关键词
-      const searchInput = screen.getByPlaceholderText("搜索服务名、工具名...");
+      const searchInput = screen.getByPlaceholderText(
+        "搜索服务名、工具名或描述"
+      );
       await user.type(searchInput, "tool1");
 
       // 应该显示搜索结果提示
@@ -131,7 +133,9 @@ describe("McpToolTable", () => {
       });
 
       // 输入搜索关键词
-      const searchInput = screen.getByPlaceholderText("搜索服务名、工具名...");
+      const searchInput = screen.getByPlaceholderText(
+        "搜索服务名、工具名或描述"
+      );
       await user.type(searchInput, "tool1");
 
       // 点击清除按钮
@@ -209,7 +213,9 @@ describe("McpToolTable", () => {
       });
 
       // 输入不存在的搜索关键词
-      const searchInput = screen.getByPlaceholderText("搜索服务名、工具名...");
+      const searchInput = screen.getByPlaceholderText(
+        "搜索服务名、工具名或描述"
+      );
       await user.type(searchInput, "nonexistenttool123");
 
       // 应该显示无结果提示
@@ -238,4 +244,39 @@ it("具名开关提交正确服务与工具，成功后重新读取列表", asyn
     })
   );
   await waitFor(() => expect(apiClient.getToolsList).toHaveBeenCalledTimes(2));
+});
+
+it("内置记忆工具可按中文说明搜索，开关仍提交原说明，其他工具保留原文", async () => {
+  const user = userEvent.setup();
+  const tools = [
+    ["memory", "memory_read_result", "原始工具返回协议"],
+    ["other", "memory_read_result", "其他服务的说明"],
+    ["memory", "unknown_tool", "未知工具的说明"],
+  ].map(([serviceName, toolName, description]) => ({
+    ...mockTools[0],
+    name: `${serviceName}__${toolName}`,
+    description,
+    handler: { type: "mcp" as const, config: { serviceName, toolName } },
+  }));
+  vi.mocked(apiClient.getToolsList).mockResolvedValue(tools as never);
+  render(<McpToolTable initialStatus="all" />);
+  expect(await screen.findByText("其他服务的说明")).toBeInTheDocument();
+  expect(screen.getByText("未知工具的说明")).toBeInTheDocument();
+  await user.type(
+    screen.getByPlaceholderText("搜索服务名、工具名或描述"),
+    "分段接收"
+  );
+  expect(await screen.findByText("找到 1 个结果")).toBeInTheDocument();
+  expect(
+    screen.getByText("分段接收过长的工具返回结果，直到读完。")
+  ).toBeInTheDocument();
+  await user.click(
+    screen.getByRole("switch", { name: "启用工具 memory_read_result" })
+  );
+  expect(apiClient.manageMCPTool).toHaveBeenCalledWith({
+    action: "disable",
+    serverName: "memory",
+    toolName: "memory_read_result",
+    description: "原始工具返回协议",
+  });
 });

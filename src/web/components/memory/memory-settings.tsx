@@ -180,7 +180,7 @@ export function MemorySettingsForm({
             基础设置
           </h3>
           <p className="text-sm text-muted-foreground">
-            通过 MCP 逐轮记录，需先配置角色规则。
+            将提示词追加到小智的「角色介绍」，让它调用本地记忆库。
           </p>
         </div>
         <MemoryRecordingRules prompt={recordingPrompt} />

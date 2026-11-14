@@ -1,8 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import {
-  MemoryGraph,
-  MemoryGraphExplorer,
-} from "@/components/memory/memory-graph";
+import { MemoryGraphExplorer } from "@/components/memory/memory-graph";
 import { MemoryGraphCanvas } from "@/components/memory/memory-graph-canvas";
 import {
   buildMemoryGraph,
@@ -256,19 +253,17 @@ describe("图谱交互", () => {
     }
   });
 
-  it("默认折叠不读取，收起后取消未完成的请求", async () => {
-    const user = userEvent.setup();
+  it("打开图谱即读取记忆，离开后取消未完成的请求", async () => {
     const entries = vi
       .spyOn(memoryApi, "entries")
       .mockReturnValue(new Promise(() => {}));
-    render(<MemoryGraph revision={0} onSelect={vi.fn()} />);
-    expect(entries).not.toHaveBeenCalled();
-    const toggle = screen.getByRole("button", { name: "记忆图谱" });
-    await user.click(toggle);
+    const view = render(
+      <MemoryGraphExplorer revision={0} onSelect={vi.fn()} />
+    );
     await waitFor(() => expect(entries).toHaveBeenCalledOnce());
     const signal = entries.mock.calls[0][1];
     expect(signal?.aborted).toBe(false);
-    await user.click(toggle);
+    view.unmount();
     expect(signal?.aborted).toBe(true);
     expect(screen.queryByText("正在连接记忆图谱…")).not.toBeInTheDocument();
   });

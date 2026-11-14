@@ -19,12 +19,9 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useMemoryResource } from "@/hooks/useMemoryResource";
 import { cn } from "@/lib/utils";
 import {
-  ChevronDown,
-  ChevronRight,
   Expand,
   Info,
   List,
-  Network,
   Search,
   Shrink,
   SlidersHorizontal,
@@ -83,38 +80,6 @@ const lightTheme = {
   "--secondary": "40 12% 90%",
   "--secondary-foreground": "220 10% 22%",
 } as CSSProperties;
-
-export function MemoryGraph({
-  revision,
-  onSelect,
-}: { revision: number; onSelect: (selection: MemorySelection) => void }) {
-  const [open, setOpen] = useState(false);
-  const contentId = useId();
-  return (
-    <section aria-label="记忆图谱" className="min-w-0">
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-expanded={open}
-        aria-controls={contentId}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <Network data-icon="inline-start" />
-        记忆图谱
-        {open ? (
-          <ChevronDown data-icon="inline-end" />
-        ) : (
-          <ChevronRight data-icon="inline-end" />
-        )}
-      </Button>
-      <div id={contentId} className={open ? "pt-3" : undefined}>
-        {open ? (
-          <MemoryGraphExplorer revision={revision} onSelect={onSelect} />
-        ) : null}
-      </div>
-    </section>
-  );
-}
 
 export function MemoryGraphExplorer({
   revision,
@@ -394,8 +359,8 @@ export function MemoryGraphExplorer({
           </p>
           <p>
             最多载入 {GRAPH_LIMIT}{" "}
-            条生效中或候选记忆；搜索和筛选仅作用于这个集合。更多内容可在“更多 →
-            全部记忆”中搜索。{graph.isolated}{" "}
+            条生效中或候选记忆；搜索和筛选仅作用于这个集合。更多内容可在“记忆库
+            → 更多 → 全部记忆”中搜索。{graph.isolated}{" "}
             条记忆没有当前视角下的共同字段，仍作为独立点保留。
           </p>
           <p>

@@ -72,7 +72,7 @@ export function VoiceInteractionCard() {
           ? "语音交互已就绪"
           : statusParts.length > 0
             ? `${statusParts.join("、")} 已配置`
-            : "请配置语音服务"
+            : "自建实时语音时按需配置"
       }
       actions={<VoiceInteractionSettingDialog />}
     />

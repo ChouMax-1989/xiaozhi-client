@@ -11,7 +11,6 @@ import {
   type MemorySelection,
 } from "@/components/memory/memory-detail";
 import { MemoryEntries } from "@/components/memory/memory-entries";
-import { MemoryGraph } from "@/components/memory/memory-graph";
 import {
   MemoryOperations,
   MemorySummaries,
@@ -285,7 +284,6 @@ export default function MemoryPage() {
                 onSelect={setSelection}
                 onChanged={onChanged}
               />
-              <MemoryGraph revision={revision} onSelect={setSelection} />
             </section>
           </>
         ) : null}

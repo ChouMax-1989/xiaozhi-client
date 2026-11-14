@@ -9,32 +9,27 @@ export function SiteHeader({ title }: { title: string }) {
     <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
       <h1 className="mr-2 text-base font-medium">{title}</h1>
       <nav aria-label="主导航" className="flex items-center gap-1">
-        <NavLink
-          to="/dashboard"
-          className={({ isActive }) =>
-            cn(
-              buttonVariants({
-                variant: isActive ? "secondary" : "ghost",
-                size: "sm",
-              })
-            )
-          }
-        >
-          看板
-        </NavLink>
-        <NavLink
-          to="/memory"
-          className={({ isActive }) =>
-            cn(
-              buttonVariants({
-                variant: isActive ? "secondary" : "ghost",
-                size: "sm",
-              })
-            )
-          }
-        >
-          记忆库
-        </NavLink>
+        {[
+          ["/dashboard", "看板"],
+          ["/memory", "记忆库"],
+          ["/memory-graph", "记忆图谱"],
+        ].map(([path, label]) => (
+          <NavLink
+            key={path}
+            to={path}
+            end
+            className={({ isActive }) =>
+              cn(
+                buttonVariants({
+                  variant: isActive ? "secondary" : "ghost",
+                  size: "sm",
+                })
+              )
+            }
+          >
+            {label}
+          </NavLink>
+        ))}
       </nav>
       <div className="ml-auto flex items-center gap-3">
         <div className="hidden sm:block">

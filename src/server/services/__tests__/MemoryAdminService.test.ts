@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { PassThrough, type Readable, type Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig, MCPServerConfig } from "../../../config/index.js";
+import { memoryRolePrompt } from "../../../memory/prompts.js";
 import {
   MemoryAdminProcessRunner,
   MemoryAdminService,
@@ -79,8 +80,7 @@ describe("记忆管理配置与任务", () => {
   it("未配置历史凭据也提供逐轮记录角色规则，不启动同步", async () => {
     const service = new MemoryAdminService({ config, worker });
     const overview = await service.getOverview();
-    expect(overview.recordingPrompt).toContain("memory_record_turn");
-    expect(overview.recordingPrompt).toContain("requestId");
+    expect(overview.recordingPrompt).toBe(memoryRolePrompt());
     expect(overview.ready).toBe(false);
     expect(worker.run).not.toHaveBeenCalled();
   });

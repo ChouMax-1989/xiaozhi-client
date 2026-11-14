@@ -6,6 +6,7 @@ import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 const MemoryPage = lazy(() => import("@/pages/MemoryPage"));
+const MemoryGraphPage = lazy(() => import("@/pages/MemoryGraphPage"));
 
 function App() {
   return (
@@ -13,25 +14,21 @@ function App() {
       {/* 重启通知管理器 - 全局监听重启状态变化 */}
       <RestartNotificationProvider />
 
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route
-          path="/memory"
-          element={
-            <Suspense
-              fallback={
-                <output className="p-6 text-sm text-muted-foreground">
-                  正在打开记忆库…
-                </output>
-              }
-            >
-              <MemoryPage />
-            </Suspense>
-          }
-        />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+      <Suspense
+        fallback={
+          <output className="p-6 text-sm text-muted-foreground">
+            正在打开页面…
+          </output>
+        }
+      >
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/memory" element={<MemoryPage />} />
+          <Route path="/memory-graph" element={<MemoryGraphPage />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </Suspense>
 
       {/* Toast 通知容器 */}
       <Toaster

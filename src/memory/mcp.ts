@@ -307,7 +307,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     {
       title: "记录模型自报对话片段",
       description:
-        "逐条提交用户、助手或工具的原样文本。每次最多8000个UTF-16单元；超长按顺序分段，每段使用不同requestId。重试相同片段使用完全相同参数。记录是模型自报，并非官方原文；不能提交智能体、端点或官方来源ID。",
+        "逐条提交用户、助手或工具的原样文本，跳过记忆工具自身的调用和回执。同一会话沿用 conversationId，新会话换 ID，首条附 conversationTitle。拟回复标 draft，已知最终回复标 final，其余标 unknown。每次最多8000个UTF-16单元；超长按顺序分段，每段使用不同requestId。重试相同片段使用完全相同参数。记录是模型自报，并非官方原文；不能提交智能体、端点或官方来源ID。",
       inputSchema: recordTurnSchema,
       annotations: { ...write, destructiveHint: false, idempotentHint: true },
     },
@@ -336,7 +336,9 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         .object({
           chatId: identifierSchema
             .optional()
-            .describe("只读取指定会话；不能改变智能体或人物身份"),
+            .describe(
+              "只读取指定会话。整理当前对话时使用 memory_record_turn 回执中的 chatId"
+            ),
           afterId: identifierSchema
             .optional()
             .describe("上一页返回的nextCursor"),
@@ -437,7 +439,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     {
       title: "检索本地记忆",
       description:
-        "按短关键词及可选本地category检索本库记忆，默认只返回有效正式条目。includeCandidates还会返回最近的未验证暂存provisionalCaptures，只供复核，不能作为来源；指定category时不返回没有分类的暂存候选。limit限制两个列表的总条数。候选和历史需按各自status理解；不同scope不能默认当作同一个说话人。返回的证据片段可能截断，可按messageId读取原文。",
+        "按短关键词及可选本地category检索本库记忆，默认只返回有效正式条目。开聊或回忆往事时设 includeCandidates:true，同时查找待核实的记忆。includeCandidates还会返回最近的未验证暂存provisionalCaptures，只供复核，不能作为来源；指定category时不返回没有分类的暂存候选。limit限制两个列表的总条数。候选和历史需按各自status理解；不同scope不能默认当作同一个说话人。返回的证据片段可能截断，可按messageId读取原文。",
       inputSchema: z
         .object({
           query: z.string().trim().max(200).optional(),

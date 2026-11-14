@@ -15,16 +15,15 @@ export const MEMORY_EXTRACTION_RULES = `你正在为当前本地记忆库整理�
 13. 本地展示分为用户画像和情境记忆，并非官方注册字段。画像 facet 推荐 preferred_name、age、communication_style、ai_interaction_preference、personality_traits、interests、relationships、routines；情境推荐 recent_event、plan、context_preference。保留已有自定义 facet，不为分类改写事实。
 14. 工具结果 segmented=true 时先用 memory_read_result 按 nextOffset 完成传输续读，拼接 chunk 校验后解析 JSON；再按原文自身 nextOffset 使用 memory_read_source。工具名前缀以实际列表为准。`;
 
-export const MEMORY_RECORDING_RULES = `【本地记忆规则：追加在原有人设后】
-1. 开局用 memory_search(includeCandidates:true) 读取与当前话题相关的记忆；候选只能作未验证参考，不能当作已确认事实。工具名以实际列表为准，可能带 memory__ 前缀；没有对应工具时如实说明，不假装调用成功。
-2. 每轮用 memory_record_turn 逐条记录实际掌握的用户原话、助手回复和相关工具文本，role 分别为 user、assistant、tool。不摘要、不补写、不猜测缺失内容；记录服务自身的调用和回执不递归记录。只有收到成功回执才能说已保存，失败或遗漏要如实说明。
-3. 同一次对话保持同一 conversationId，新对话生成新ID，不跨会话复用；首条用 conversationTitle 给出简短标题（最多100字符）。每条使用唯一 requestId（8至128字符）；重试沿用相同ID及完全相同参数。每次只提交一条角色文本，超出8000个UTF-16单元时按原顺序分段，每段独立ID，保留空白和换行，不拆开表情字符。
-4. 助手尚未发出的拟回复标 assistantStage:draft；只有已知最终回复时标 final，不确定时标 unknown。不能把拟回复称为用户实际听到的内容。记录属于 model_reported，是模型提交的文本，不是官方完整日志；不能补写模型看不到的消息。
-5. 返回 segmented:true 时，保留首段 chunk，使用同一 cursor 和返回的 nextOffset 调 memory_read_result（参数名 offset），依次拼接到 nextOffset:null。期间不要调用其他记忆工具。核对 cursor、总长、sha256 一致且偏移连续，再解析完整JSON；totalLength按UTF-16单元计算，有计算能力时校验UTF-8的SHA-256，不得虚称已计算。原文自身 nextOffset 是另一层分页，要再用 memory_read_source 携带原messageId、revision继续读完。游标失效时重读原工具；写入重试仍保持原requestId及参数。
-6. 有长期价值的内容，在记录后用 memory_read_sources 读取待处理原文及完整提炼规则，必要时 memory_read_source 续读，再检索旧记忆、用 memory_submit 保存。保留人物、否定、条件和时间，引用真实sourceId、revision及逐字原话；不确定的内容保留候选。只有完整读完并处理后才 memory_finish_sources，概要只引用有效正式记忆。
-7. category 是本地分类：user_profile 为人物稳定信息，situational 为事件、计划、条件或实体信息。facet 推荐 preferred_name、age、communication_style、ai_interaction_preference、personality_traits、interests、relationships、routines、recent_event、plan、context_preference；保留已有自定义名称，不为分类改写事实。`;
+export function memoryRolePrompt(serviceName = "memory") {
+  return `新对话开始或用户提起往事时，先用 ${serviceName}__memory_search 查相关记忆。
+每轮用 ${serviceName}__memory_record_turn 逐条保存用户原话、你的回复和其他工具的结果。
+用户说到偏好、计划或重要经历时，用 ${serviceName}__memory_read_sources 读取本次对话的原话，再用 ${serviceName}__memory_submit 保存值得记住的内容。
+用户请你操作设备时，调用对应工具，按结果回答。`;
+}
 
-export const MEMORY_SERVER_INSTRUCTIONS = `这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型不能导入官方档案、访问本机路径、读取凭据、同步远端或撤销历史。${MEMORY_RECORDING_RULES}`;
+export const MEMORY_SERVER_INSTRUCTIONS =
+  "这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型不能导入官方档案、访问本机路径、读取凭据、同步远端或撤销历史。对话开始或回忆往事时用 memory_search(includeCandidates:true)，候选只作线索。每轮调用 memory_record_turn，按实际列表选择工具。";
 
 export const TRUNCATED_SOURCE_WARNING =
   "这条原文仅显示片段。请按 nextOffset 调用 memory_read_source，保持同一 sourceId 和 revision；缺失的上下文不能作为证据，未读完不能标记整条来源已处理。";

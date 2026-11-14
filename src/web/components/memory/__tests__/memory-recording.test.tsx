@@ -24,11 +24,9 @@ describe("角色记录规则", () => {
       .mockResolvedValue();
     const success = vi.spyOn(toast, "success");
     render(<MemoryRecordingRules prompt={prompt} />);
-    await user.click(screen.getByRole("button", { name: "复制角色记录规则" }));
+    await user.click(screen.getByRole("button", { name: "复制提示词" }));
     expect(write).toHaveBeenCalledWith(prompt);
-    expect(success).toHaveBeenCalledWith(
-      "角色记录规则已复制，请追加到小智角色介绍，保留原有人设。"
-    );
+    expect(success).toHaveBeenCalledWith("提示词已复制");
     expect(screen.queryByLabelText("角色记录规则全文")).not.toBeInTheDocument();
   });
 
@@ -39,13 +37,13 @@ describe("角色记录规则", () => {
       .mockRejectedValueOnce(new Error("拒绝访问剪贴板"))
       .mockResolvedValue();
     render(<MemoryRecordingRules prompt={prompt} />);
-    await user.click(screen.getByRole("button", { name: "复制角色记录规则" }));
+    await user.click(screen.getByRole("button", { name: "复制提示词" }));
     const fullText = screen.getByLabelText("角色记录规则全文");
     expect(fullText).toHaveValue(prompt);
     expect(fullText).toHaveAttribute("readonly");
     await user.click(fullText);
     expect((fullText as HTMLTextAreaElement).selectionEnd).toBe(prompt.length);
-    await user.click(screen.getByRole("button", { name: "复制角色记录规则" }));
+    await user.click(screen.getByRole("button", { name: "复制提示词" }));
     expect(write).toHaveBeenCalledTimes(2);
     await waitFor(() =>
       expect(
@@ -56,9 +54,7 @@ describe("角色记录规则", () => {
 
   it("旧接口未返回规则时禁用复制且提供刷新说明", () => {
     render(<MemoryRecordingRules />);
-    expect(
-      screen.getByRole("button", { name: "复制角色记录规则" })
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "复制提示词" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("暂未提供记录规则");
   });
 });

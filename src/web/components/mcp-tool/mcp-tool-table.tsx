@@ -40,11 +40,29 @@ import { ToolSortSelector } from "./tool-sort-selector";
 const UNKNOWN_SERVICE_NAME = "未知服务";
 const CUSTOM_SERVICE_NAME = "自定义服务";
 
+const memoryToolDescriptions = new Map<string, string>([
+  ["memory_status", "查看本地记忆库的对话、记忆和待处理消息数量。"],
+  [
+    "memory_record_turn",
+    "保存小智提交的一条对话记录，可以是用户发言、小智回复或工具输出。",
+  ],
+  ["memory_read_sources", "分批读取待整理的对话消息，供小智提炼记忆。"],
+  ["memory_read_source", "查看一条消息的原文，长消息可以分段读完。"],
+  ["memory_search", "按关键词查找记忆，默认只显示已生效的正式记忆。"],
+  ["memory_submit", "根据引用的原文新增、更新或补充一条记忆。"],
+  ["memory_capture_candidate", "暂存尚未核实的信息，作为候选记忆留待确认。"],
+  ["memory_finish_sources", "把已经审阅的原文标记为已处理。"],
+  ["memory_save_summary", "保存根据正式记忆写成的摘要。"],
+  ["memory_read_summaries", "查看仍然有效的记忆摘要。"],
+  ["memory_read_result", "分段接收过长的工具返回结果，直到读完。"],
+]);
+
 export interface ToolRowData {
   name: string;
   serverName: string;
   toolName: string;
   description: string;
+  displayDescription?: string;
   enabled: boolean;
   usageCount: number;
   lastUsedTime: string;
@@ -148,6 +166,10 @@ export function McpToolTable({
         serverName: serviceName,
         toolName,
         description: tool.description || "",
+        displayDescription:
+          serviceName === "memory"
+            ? memoryToolDescriptions.get(toolName)
+            : undefined,
         enabled,
         usageCount: tool.usageCount || 0,
         lastUsedTime: tool.lastUsedTime || "",
@@ -311,7 +333,7 @@ export function McpToolTable({
         <ToolSearchInput
           value={searchValue}
           onChange={setSearchValue}
-          placeholder="搜索服务名、工具名..."
+          placeholder="搜索服务名、工具名或描述"
         />
       </div>
 
@@ -394,7 +416,7 @@ export function McpToolTable({
                     </TableCell>
                     <TableCell className="text-muted-foreground max-w-[300px]">
                       <CollapsibleText
-                        text={tool.description}
+                        text={tool.displayDescription ?? tool.description}
                         maxLength={100}
                         textSize="text-xs"
                         storageKey={`mcp-tool-desc-${tool.name}`}

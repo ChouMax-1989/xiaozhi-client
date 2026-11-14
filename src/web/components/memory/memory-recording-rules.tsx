@@ -14,7 +14,7 @@ export function MemoryRecordingRules({ prompt = "" }: { prompt?: string }) {
     try {
       await navigator.clipboard.writeText(prompt);
       setManualCopy(false);
-      toast.success("角色记录规则已复制，请追加到小智角色介绍，保留原有人设。");
+      toast.success("提示词已复制");
     } catch {
       setManualCopy(true);
     } finally {
@@ -30,11 +30,8 @@ export function MemoryRecordingRules({ prompt = "" }: { prompt?: string }) {
         onClick={() => void copyRules()}
       >
         <Copy data-icon="inline-start" />
-        {copying ? "正在复制…" : "复制角色记录规则"}
+        {copying ? "正在复制…" : "复制提示词"}
       </Button>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        追加到小智角色介绍，保留原有人设；工具名以小智实际工具列表为准。
-      </p>
       {!prompt ? (
         <output className="text-xs text-muted-foreground">
           暂未提供记录规则，请刷新服务状态后重试。

@@ -36,6 +36,7 @@ export function useToolSearch(tools: ToolRowData[]): UseToolSearchResult {
       (tool) =>
         (tool?.serverName?.toLowerCase() || "").includes(keyword) ||
         (tool?.toolName?.toLowerCase() || "").includes(keyword) ||
+        (tool?.displayDescription?.toLowerCase() || "").includes(keyword) ||
         (tool?.description?.toLowerCase() || "").includes(keyword)
     );
   }, [safeTools, searchValue]);
