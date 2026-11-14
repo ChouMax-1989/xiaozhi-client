@@ -137,6 +137,8 @@ try {
     assert.deepEqual((await response.json()).data, { enabled });
   }
   const opening = () => invoke(peer, "memory_search", { chatStart: true });
+  assert.ok((await opening()).source, "默认开启，新对话直接收到原文");
+  await setAutoExtract(false);
   assert.equal((await opening()).autoExtract, undefined);
   await setAutoExtract(true);
   assert.ok((await opening()).autoExtract);
@@ -146,7 +148,10 @@ try {
   const bulkResponse = await fetch(`${api}/api/memory/bulk-extract`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) });
   assert.equal(bulkResponse.status, 200);
   assert.deepEqual((await bulkResponse.json()).data, { active: true, total: 1, remaining: 1 });
-  assert.match((await opening()).autoExtract, /bulk:true/u);
+  const task = await opening();
+  assert.match(task.autoExtract, /memory__memory_finish_sources/u);
+  assert.equal(task.source.content, archiveText.slice(0, task.source.nextOffset));
+  assert.equal(task.source.continueWith, "memory__memory_read_source");
   assert.equal((await invoke(peer, "memory_read_sources", { bulk: true })).messages.length, 1);
   await setAutoExtract(true);
   const record = { requestId: "endpoint-smoke-turn-1", conversationId: "synthetic-chat", role: "user", content: '  中文😀 e\u0301 "引号" \\ \n\t尾\r\n'.repeat(270) };
