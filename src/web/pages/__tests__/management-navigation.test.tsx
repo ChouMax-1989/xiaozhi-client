@@ -180,11 +180,13 @@ it("看板无需连接记忆服务即可复制完整的正式角色提示词", a
   );
   expect(write).toHaveBeenCalledWith(memoryRolePrompt("archive"));
   const copied = write.mock.calls.at(-1)?.[0];
-  expect(copied).toContain("开聊、普通聊天和自然告别都不触发");
-  expect(copied).toContain("archive__memory_capture_candidate");
-  expect(copied).not.toContain("archive__memory_record_turn");
-  expect(copied).not.toContain("archive__memory_read_sources");
-  expect(copied).not.toContain("archive__memory_finish_sources");
+  expect(copied).toContain("archive__memory_record_turn");
+  expect(copied).toContain(
+    "archive__memory_read_source({messageId:sourceId,compact:true})"
+  );
+  expect(copied).toContain("archive__memory_finish_sources");
+  expect(copied).toContain("标记本轮已审阅来源");
+  expect(copied).toContain("不主动整理历史积压");
   expect(memoryApi.overview).not.toHaveBeenCalled();
 });
 

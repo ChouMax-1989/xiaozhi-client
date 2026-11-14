@@ -419,7 +419,7 @@ export function createMemoryServer(
     {
       title: "记录模型自报对话片段",
       description:
-        "逐条提交用户、助手或工具的原样文本，跳过记忆工具自身的调用和回执。同一会话沿用 conversationId，新会话换 ID，首条附 conversationTitle。拟回复标 draft，已知最终回复标 final，其余标 unknown。每次最多8000个UTF-16单元；超长按顺序分段，每段使用不同requestId。重试相同片段使用完全相同参数。记录是模型自报，并非官方原文；不能提交智能体、端点或官方来源ID。",
+        "每轮主动逐条记录用户原话、可见助手回复和非记忆工具结果，不等提醒或告别；跳过记忆工具自身的调用和回执。同一会话沿用 conversationId，新会话换 ID，首条附 conversationTitle。拟回复标 draft，已知最终回复标 final，其余标 unknown。每次最多8000个UTF-16单元；超长按顺序分段，每段使用不同requestId。重试相同片段使用完全相同参数。记录是模型自报，并非官方原文；不能提交智能体、端点或官方来源ID。",
       inputSchema: recordTurnSchema,
       annotations: { ...write, destructiveHint: false, idempotentHint: true },
     },
@@ -449,7 +449,7 @@ export function createMemoryServer(
           chatId: identifierSchema
             .optional()
             .describe(
-              "只读取指定会话。整理当前对话时使用 memory_record_turn 回执中的 chatId"
+              "只读取指定会话。整理当前轮时使用 memory_record_turn 回执中的 chatId，且仅处理本轮 sourceId；不传 automatic 或 bulk"
             ),
           afterId: identifierSchema
             .optional()
@@ -738,7 +738,7 @@ export function createMemoryServer(
     {
       title: "提交有来源的记忆",
       description:
-        "提交一条来源可核对的结构化记忆。引用真实sourceId、当前revision和用户逐字原话；保留否定、人物归属、时间和条件。计划、单次事件和推断进入候选。纠正需明确纠正引文及最新目标版本。requestId对同一内容重试保持不变，不同内容不可复用。",
+        "提交一条来源可核对的结构化记忆。引用真实sourceId、当前revision和用户逐字原话；保留否定、人物归属、时间和条件。计划、单次事件、推断和助手建议可能进入候选。纠正需明确纠正引文及最新目标版本。requestId对同一内容重试保持不变，不同内容不可复用。",
       inputSchema: memoryProposalSchema,
       annotations: { ...write, destructiveHint: true, idempotentHint: true },
     },
@@ -790,7 +790,7 @@ export function createMemoryServer(
           ...(bulkExtract.total > 0 ? { bulkExtract } : {}),
           ...(bulkExtract.active
             ? {
-                autoExtract: `继续调用 ${tool("memory_read_sources")}(bulk:true) 取下一批。`,
+                autoExtract: `仅在用户明确要求整理全部历史时，继续调用 ${tool("memory_read_sources")}(bulk:true) 取下一批。`,
               }
             : {}),
         };

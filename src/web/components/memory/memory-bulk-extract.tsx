@@ -71,7 +71,7 @@ export function MemoryBulkExtract({
         >
           更新角色介绍
         </button>
-        。开聊和告别不触发整理。只有明确发起整理任务才让聊天模型处理积压；开关开启不代表后台模型已经可用。暂停会保留批量任务的进度。
+        。普通聊天按角色提示词记录和处理当前轮；历史积压仅在明确发起整理任务时处理。开关开启不代表后台模型已经可用。暂停会保留批量任务的进度。
       </p>
       {error ? (
         <p role="alert" className="text-sm text-destructive">
