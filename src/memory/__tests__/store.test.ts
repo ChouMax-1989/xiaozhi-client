@@ -64,7 +64,8 @@ describe("有来源的本地记忆存储", () => {
           }))
         );
       }
-      expect(store.setBulkExtractEnabled(true)).toEqual({
+      expect(store.startBulkExtractOnChat()).toBe(true);
+      expect(store.getBulkExtractStatus()).toEqual({
         active: true,
         total: count,
         remaining: count,
@@ -113,13 +114,29 @@ describe("有来源的本地记忆存储", () => {
         remaining: 0,
       });
       expect(store.readSources().messages.map((m) => m.id)).toEqual(["新消息"]);
-      expect(store.setBulkExtractEnabled(true)).toEqual({
+      expect(store.startBulkExtractOnChat()).toBe(true);
+      expect(store.getBulkExtractStatus()).toEqual({
         active: true,
         total: 1,
         remaining: 1,
       });
     }
   );
+
+  it("空库暂停后重新打开并导入旧消息，只在恢复后领取", () => {
+    expect(store.getAutoExtractEnabled()).toBe(true);
+    expect(store.startBulkExtractOnChat()).toBe(false);
+    store.setBulkExtractEnabled(false);
+    store.close();
+    store = new MemoryStore(join(directory, "memory.sqlite"), {
+      agentId: "test-agent",
+    });
+    source();
+    expect(store.getAutoExtractEnabled()).toBe(false);
+    expect(store.startBulkExtractOnChat()).toBe(false);
+    expect(store.setBulkExtractEnabled(true).remaining).toBe(1);
+    expect(store.startBulkExtractOnChat()).toBe(true);
+  });
 
   function proposal(
     message: SourceMessage,

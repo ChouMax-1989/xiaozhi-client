@@ -502,7 +502,6 @@ export class MemoryStore {
       limit?: number;
       pendingOnly?: boolean;
       bulk?: boolean;
-      skipBulkQueue?: boolean;
     } = {}
   ) {
     const limit = Math.max(1, Math.min(options.limit ?? 20, 50));
@@ -525,14 +524,12 @@ export class MemoryStore {
       : this.db
           .prepare(`SELECT json, processed_revision FROM messages
       WHERE (? IS NULL OR chat_id = ?) AND rowid > ? AND (? = 0 OR processed_revision < revision)
-      AND (? = 0 OR id NOT IN (SELECT message_id FROM bulk_extract_queue))
       ORDER BY rowid LIMIT ?`)
           .all(
             options.chatId ?? null,
             options.chatId ?? null,
             afterRow,
             options.pendingOnly === false ? 0 : 1,
-            options.skipBulkQueue ? 1 : 0,
             limit + 1
           );
     const messages = rows.slice(0, limit).map((row) => ({
@@ -1454,11 +1451,14 @@ export class MemoryStore {
   }
 
   getAutoExtractEnabled(): boolean {
-    return (
-      this.db
-        .prepare("SELECT value FROM metadata WHERE key = 'autoExtract'")
-        .get()?.value === "1"
-    );
+    // 旧版的批任务和日常提炼分别设置。先保留尚未结束的任务及明确的暂停。
+    const row = this.db
+      .prepare(`SELECT COALESCE(
+      (SELECT enabled FROM bulk_extract_job WHERE enabled = 0 OR EXISTS (SELECT 1 FROM bulk_extract_queue)),
+      (SELECT CAST(value AS INTEGER) FROM metadata WHERE key = 'autoExtract'), 1
+    ) AS enabled`)
+      .get();
+    return row?.enabled === 1;
   }
 
   getBulkExtractStatus() {
@@ -1474,46 +1474,45 @@ export class MemoryStore {
     };
   }
 
+  private prepareBulkExtract() {
+    const current = this.getBulkExtractStatus();
+    if (current.remaining > 0) return current;
+    // 固定本次消息范围，后续新增的原文留到下次开聊。
+    const inserted = this.db
+      .prepare(`INSERT INTO bulk_extract_queue(message_id)
+      SELECT id FROM messages WHERE processed_revision < revision ORDER BY rowid`)
+      .run();
+    if (!inserted.changes) return current;
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO bulk_extract_job(id, enabled, total) VALUES (1, 1, ?)"
+      )
+      .run(inserted.changes);
+    return this.getBulkExtractStatus();
+  }
+
+  startBulkExtractOnChat(): boolean {
+    return this.transaction(
+      () => this.getAutoExtractEnabled() && this.prepareBulkExtract().active
+    );
+  }
+
   setBulkExtractEnabled(enabled: boolean) {
     return this.transaction(() => {
-      const current = this.getBulkExtractStatus();
-      if (enabled && current.remaining === 0) {
-        // 仅收录点击时尚待处理的消息，整理过程中新产生的聊天留给下次任务。
-        const inserted = this.db
-          .prepare(`INSERT INTO bulk_extract_queue(message_id)
-          SELECT id FROM messages WHERE processed_revision < revision ORDER BY rowid`)
-          .run();
-        if (inserted.changes)
-          this.db
-            .prepare(
-              "INSERT OR REPLACE INTO bulk_extract_job(id, enabled, total) VALUES (1, 1, ?)"
-            )
-            .run(inserted.changes);
-      } else {
-        this.db
-          .prepare("UPDATE bulk_extract_job SET enabled = ? WHERE id = 1")
-          .run(enabled ? 1 : 0);
-      }
-      return this.getBulkExtractStatus();
+      this.db
+        .prepare(
+          "INSERT INTO metadata(key, value) VALUES ('autoExtract', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        .run(enabled ? "1" : "0");
+      this.db
+        .prepare("UPDATE bulk_extract_job SET enabled = ? WHERE id = 1")
+        .run(enabled ? 1 : 0);
+      return enabled ? this.prepareBulkExtract() : this.getBulkExtractStatus();
     });
   }
 
   setAutoExtractEnabled(enabled: boolean): void {
-    this.db
-      .prepare(
-        "INSERT INTO metadata(key, value) VALUES ('autoExtract', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-      )
-      .run(enabled ? "1" : "0");
-  }
-
-  hasPendingSources(): boolean {
-    return Boolean(
-      this.db
-        .prepare(
-          "SELECT 1 FROM messages WHERE processed_revision < revision AND id NOT IN (SELECT message_id FROM bulk_extract_queue) LIMIT 1"
-        )
-        .get()
-    );
+    this.setBulkExtractEnabled(enabled);
   }
 
   status() {

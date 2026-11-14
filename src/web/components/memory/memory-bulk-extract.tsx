@@ -5,28 +5,28 @@ import { useState } from "react";
 import type { MemoryBulkExtractStatus } from "../../../types/memory-admin";
 
 export function MemoryBulkExtract({
+  enabled,
   status,
   loading,
   onSaved,
+  onOpenSettings,
 }: {
+  enabled?: boolean;
   status?: MemoryBulkExtractStatus;
   loading: boolean;
-  onSaved: (saved: MemoryBulkExtractStatus) => void;
+  onSaved: () => void;
+  onOpenSettings: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [empty, setEmpty] = useState(false);
-  const paused = !status?.active && (status?.remaining ?? 0) > 0;
-  const label = status?.active ? "暂停整理" : paused ? "继续整理" : "整理全部";
 
   async function changeBulkExtract() {
-    if (!status || saving) return;
+    if (enabled === undefined || !status || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const saved = await memoryApi.setBulkExtract(!status.active);
-      setEmpty(!status.active && !saved.active && saved.remaining === 0);
-      onSaved(saved);
+      await memoryApi.setBulkExtract(!enabled);
+      onSaved();
     } catch (failure) {
       setError(memoryError(failure));
     } finally {
@@ -37,28 +37,41 @@ export function MemoryBulkExtract({
   return (
     <div className="flex flex-col items-start gap-2">
       <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-base font-semibold">整理全部</h3>
         <Button
           variant="outline"
           size="sm"
-          disabled={!status || saving || loading}
+          disabled={enabled === undefined || !status || saving || loading}
           onClick={() => void changeBulkExtract()}
           aria-describedby="memory-bulk-extract-help"
         >
-          {label}
+          {enabled === undefined
+            ? "正在读取状态"
+            : enabled
+              ? "暂停整理"
+              : "继续整理"}
         </Button>
         <output className="text-sm text-muted-foreground">
-          {empty && !status?.remaining
-            ? "暂无待整理的对话。"
-            : status && status.total > 0
-              ? `${paused ? "已暂停，" : ""}已整理 ${status.total - status.remaining} / ${status.total} 条，剩余 ${status.remaining} 条`
-              : null}
+          {enabled === false ? "已暂停" : null}
+          {status && status.total > 0
+            ? `${enabled === false ? "，" : ""}已整理 ${status.total - status.remaining} / ${status.total} 条，剩余 ${status.remaining} 条`
+            : null}
+          {enabled && !status?.active ? " 等待下次开聊" : null}
         </output>
       </div>
       <p
         id="memory-bulk-extract-help"
         className="text-sm text-muted-foreground"
       >
-        下次和小智开聊时，会分批整理点击时所有待处理的原文。聊天中断后，下次开聊会接着整理。自动提炼关闭时也可使用。
+        批量提炼默认开启。首次使用请先
+        <button
+          type="button"
+          className="text-foreground underline underline-offset-4"
+          onClick={onOpenSettings}
+        >
+          更新角色介绍
+        </button>
+        。开新对话时，小智会把当时待整理的原文分批处理。如果上次中断，会先接着整理那一批。暂停后保留进度，重启服务也会保持暂停。
       </p>
       {error ? (
         <p role="alert" className="text-sm text-destructive">

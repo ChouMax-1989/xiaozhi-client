@@ -89,7 +89,7 @@ describe("本机记忆管理查询与审计", () => {
       await executeAdminRequest(store, { action: "status" }, options)
     ).toMatchObject({
       success: true,
-      data: { autoExtractEnabled: false },
+      data: { autoExtractEnabled: true },
     });
     expect(
       await executeAdminRequest(

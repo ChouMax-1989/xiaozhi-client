@@ -240,6 +240,7 @@ describe("本地记忆 MCP 真实协议集成", () => {
         archive("乙", "好的。"),
         archive("丙", "明天见。"),
       ]);
+      admin.setAutoExtractEnabled(false);
       expect(await opening()).not.toHaveProperty("autoExtract");
       expect((await batch()).messages).toHaveLength(0);
       admin.setAutoExtractEnabled(true);
@@ -292,7 +293,6 @@ describe("本地记忆 MCP 真实协议集成", () => {
       archive(String(i), i ? "你好" : "我喝咖啡不加糖。")
     );
     store.upsertMessages(messages);
-    store.setBulkExtractEnabled(true);
     const read = async () =>
       decoded<{ messages: SourceView[] }>(
         await call("memory_read_sources", { bulk: true })
@@ -320,7 +320,6 @@ describe("本地记忆 MCP 真实协议集成", () => {
     });
     store.setBulkExtractEnabled(false);
     expect(await read()).toEqual([]);
-    store.setAutoExtractEnabled(true);
     expect(
       decoded(await call("memory_search", { chatStart: true }))
     ).not.toHaveProperty("autoExtract");

@@ -30,14 +30,7 @@ const bulkInstruction =
   "调用 memory_read_sources(bulk:true) 整理一批。读全原文，提交值得保存的记忆，用 memory_finish_sources 标记已处理的消息。按回执继续取下一批，直到完成或暂停。";
 
 function openingTask(store: MemoryStore) {
-  if (store.getBulkExtractStatus().active)
-    return { autoExtract: bulkInstruction };
-  if (store.getAutoExtractEnabled() && store.hasPendingSources())
-    return {
-      autoExtract:
-        "调用 memory_read_sources(automatic:true)，只整理这批，按原文保存记忆并标记已读完的来源，然后继续聊天。",
-    };
-  return {};
+  return store.startBulkExtractOnChat() ? { autoExtract: bulkInstruction } : {};
 }
 
 /** 底层解析或文件错误可能含原文和路径，只向调用者返回固定说明。 */
@@ -386,7 +379,11 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           args.bulk
             ? { bulk: true, limit: 12 }
             : args.automatic
-              ? { pendingOnly: true, limit: 2, skipBulkQueue: true }
+              ? {
+                  pendingOnly: true,
+                  limit: 2,
+                  bulk: store.getBulkExtractStatus().active,
+                }
               : args
         );
         if (args.bulk && !page.messages.length)
@@ -503,7 +500,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           limit: z.number().int().min(1).max(20).default(5),
         })
         .strict(),
-      annotations: readOnly,
+      annotations: { ...write, destructiveHint: false },
     },
     (args) =>
       run(() => {

@@ -27,8 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { memoryError, useMemoryResource } from "@/hooks/useMemoryResource";
@@ -70,8 +68,6 @@ export default function MemoryPage() {
   const [settingsRevision, setSettingsRevision] = useState(0);
   const [selection, setSelection] = useState<MemorySelection | null>(null);
   const [syncStarting, setSyncStarting] = useState(false);
-  const [savingAutoExtract, setSavingAutoExtract] = useState(false);
-  const [autoExtractError, setAutoExtractError] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const previousSync = useRef<MemorySyncJob["state"] | null>(null);
@@ -85,19 +81,29 @@ export default function MemoryPage() {
     setSettingsRevision((value) => value + 1);
   }, [onChanged]);
   const state = overview.data?.syncJob.state;
+  const autoExtractEnabled = overview.data?.status?.autoExtractEnabled;
   const bulkExtract = overview.data?.status?.bulkExtract;
   const remaining = bulkExtract?.remaining;
   const previousRemaining = useRef(remaining);
+  const memoryCount = overview.data?.counts?.memories;
+  const previousMemoryCount = useRef(memoryCount);
 
   useEffect(() => {
     if (overview.loading || overview.error) return;
-    if (state !== "running" && !bulkExtract?.active) return;
+    if (state !== "running" && !autoExtractEnabled) return;
     const timeout = window.setTimeout(
       refreshOverview,
-      state === "running" ? 2000 : 5000
+      state === "running" ? 2000 : bulkExtract?.active ? 5000 : 30000
     );
     return () => window.clearTimeout(timeout);
-  }, [state, bulkExtract, overview.loading, overview.error, refreshOverview]);
+  }, [
+    state,
+    autoExtractEnabled,
+    bulkExtract,
+    overview.loading,
+    overview.error,
+    refreshOverview,
+  ]);
 
   useEffect(() => {
     const syncFinished =
@@ -106,12 +112,17 @@ export default function MemoryPage() {
       remaining !== undefined &&
       previousRemaining.current !== undefined &&
       remaining < previousRemaining.current;
-    if (syncFinished || batchFinished) {
+    const memoriesChanged =
+      previousMemoryCount.current !== undefined &&
+      memoryCount !== undefined &&
+      memoryCount !== previousMemoryCount.current;
+    if (syncFinished || batchFinished || memoriesChanged) {
       setRevision((value) => value + 1);
     }
     previousSync.current = state ?? null;
     previousRemaining.current = remaining;
-  }, [state, remaining]);
+    previousMemoryCount.current = memoryCount;
+  }, [state, remaining, memoryCount]);
 
   async function startSync() {
     setSyncStarting(true);
@@ -136,27 +147,6 @@ export default function MemoryPage() {
       toast.success("整理提示已复制，请粘贴到小智聊天中发送。");
     } catch {
       setPromptOpen(true);
-    }
-  }
-
-  async function changeAutoExtract(enabled: boolean) {
-    setSavingAutoExtract(true);
-    setAutoExtractError(null);
-    try {
-      const saved = await memoryApi.setAutoExtract(enabled);
-      overview.setData((value) =>
-        value?.status
-          ? {
-              ...value,
-              status: { ...value.status, autoExtractEnabled: saved.enabled },
-            }
-          : value
-      );
-    } catch (error) {
-      setAutoExtractError(memoryError(error));
-    } finally {
-      refreshOverview();
-      setSavingAutoExtract(false);
     }
   }
 
@@ -310,56 +300,12 @@ export default function MemoryPage() {
                   复制整理提示
                 </Button>
               </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                  <Label htmlFor="memory-auto-extract">自动提炼</Label>
-                  <Switch
-                    id="memory-auto-extract"
-                    checked={data?.status?.autoExtractEnabled === true}
-                    disabled={
-                      typeof data?.status?.autoExtractEnabled !== "boolean" ||
-                      savingAutoExtract ||
-                      overview.loading ||
-                      Boolean(overview.error)
-                    }
-                    onCheckedChange={changeAutoExtract}
-                    aria-describedby="memory-auto-extract-help"
-                  />
-                </div>
-                <p
-                  id="memory-auto-extract-help"
-                  className="text-sm text-muted-foreground"
-                >
-                  开启后，每次开聊时小智最多整理两条待处理原文。首次使用请先
-                  <button
-                    type="button"
-                    className="text-foreground underline underline-offset-4"
-                    onClick={() => setSettingsOpen(true)}
-                  >
-                    更新角色介绍
-                  </button>
-                  ，之后无需每次复制整理提示。
-                </p>
-                {autoExtractError ? (
-                  <p role="alert" className="text-sm text-destructive">
-                    自动提炼设置保存失败：{autoExtractError}
-                  </p>
-                ) : null}
-              </div>
               <MemoryBulkExtract
+                enabled={autoExtractEnabled}
                 status={bulkExtract}
                 loading={overview.loading || Boolean(overview.error)}
-                onSaved={(saved) => {
-                  overview.setData((value) =>
-                    value?.status
-                      ? {
-                          ...value,
-                          status: { ...value.status, bulkExtract: saved },
-                        }
-                      : value
-                  );
-                  refreshOverview();
-                }}
+                onSaved={refreshOverview}
+                onOpenSettings={() => setSettingsOpen(true)}
               />
               <MemoryCategory
                 category="user_profile"
