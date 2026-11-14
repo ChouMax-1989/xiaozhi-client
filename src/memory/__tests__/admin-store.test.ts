@@ -119,6 +119,40 @@ describe("本机记忆管理查询与审计", () => {
     });
   });
 
+  it("整理全部管理请求经过绑定检查并返回持续状态", async () => {
+    source();
+    const active = { active: true, total: 1, remaining: 1 };
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "setBulkExtractEnabled", enabled: true },
+        options
+      )
+    ).toEqual({ success: true, data: active });
+    expect(
+      await executeAdminRequest(store, { action: "status" }, options)
+    ).toMatchObject({ success: true, data: { bulkExtract: active } });
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "setBulkExtractEnabled", enabled: false },
+        options
+      )
+    ).toEqual({ success: true, data: { ...active, active: false } });
+    writeFileSync(
+      options.clientConfigPath!,
+      JSON.stringify({ mcpEndpoint: "wss://other.test/?token=changed" })
+    );
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "setBulkExtractEnabled", enabled: true },
+        options
+      )
+    ).toMatchObject({ success: false });
+    expect(store.status().bulkExtract.active).toBe(false);
+  });
+
   it("永久删除仅目标记忆、版本和派生概要，并拒绝旧请求与撤销恢复", async () => {
     const message = source();
     const input = proposal(message, {

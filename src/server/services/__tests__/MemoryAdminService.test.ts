@@ -91,12 +91,16 @@ describe("记忆管理配置与任务", () => {
       counts: {},
       sync: null,
       autoExtractEnabled: true,
+      bulkExtract: { active: true, total: 10, remaining: 3 },
     });
     const overview = await new MemoryAdminService({
       config,
       worker,
     }).getOverview();
-    expect(overview.status).toEqual({ autoExtractEnabled: true });
+    expect(overview.status).toEqual({
+      autoExtractEnabled: true,
+      bulkExtract: { active: true, total: 10, remaining: 3 },
+    });
     expect(overview.settings.restartRequired).toBe(false);
   });
 

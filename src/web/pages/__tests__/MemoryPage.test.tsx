@@ -59,6 +59,7 @@ const overview: MemoryAdminOverview = {
   extractionPrompt: "请依据原话整理记忆。",
   recordingPrompt: "追加角色规则：调用当前工具记录每轮对话。",
 };
+const idleBulkExtract = { active: false, total: 0, remaining: 0 };
 
 describe("记忆页面同步状态", () => {
   beforeEach(() => {
@@ -77,7 +78,7 @@ describe("记忆页面同步状态", () => {
     vi.spyOn(memoryApi, "overview").mockImplementation(async () => ({
       ...overview,
       settings: { ...overview.settings, tokenConfigured: false },
-      status: { autoExtractEnabled: enabled },
+      status: { autoExtractEnabled: enabled, bulkExtract: idleBulkExtract },
     }));
     const saveSettings = vi.spyOn(memoryApi, "saveSettings");
     const sync = vi.spyOn(memoryApi, "sync");
@@ -118,7 +119,7 @@ describe("记忆页面同步状态", () => {
   it("保存失败显示原因，保留当前状态并允许重试", async () => {
     vi.spyOn(memoryApi, "overview").mockResolvedValue({
       ...overview,
-      status: { autoExtractEnabled: true },
+      status: { autoExtractEnabled: true, bulkExtract: idleBulkExtract },
     });
     vi.spyOn(memoryApi, "setAutoExtract").mockRejectedValue(
       new Error("数据库暂时不可写")
@@ -134,6 +135,94 @@ describe("记忆页面同步状态", () => {
     expect(toggle).toBeChecked();
     expect(toggle).toBeEnabled();
   });
+
+  it("自动提炼关闭时也可整理全部，暂停保留进度，继续后按服务端进度刷新直至完成", async () => {
+    let bulkExtract = idleBulkExtract;
+    const getOverview = vi
+      .spyOn(memoryApi, "overview")
+      .mockImplementation(async () => ({
+        ...overview,
+        status: { autoExtractEnabled: false, bulkExtract: { ...bulkExtract } },
+      }));
+    const fetchMock = vi.fn<typeof fetch>(async (_url, options) => {
+      const { enabled } = JSON.parse(String(options?.body));
+      bulkExtract = bulkExtract.total
+        ? { ...bulkExtract, active: enabled }
+        : { active: enabled, total: 7, remaining: 7 };
+      return new Response(JSON.stringify({ success: true, data: bulkExtract }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await act(async () => {
+      render(<MemoryPage />);
+    });
+    async function clickAction(name: string, enabled: boolean) {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name }));
+      });
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/memory/bulk-extract",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ enabled }),
+        })
+      );
+      expect(
+        screen.getByRole("switch", { name: "自动提炼" })
+      ).not.toBeChecked();
+    }
+    async function advancePoll() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+    }
+    await clickAction("整理全部", true);
+    expect(screen.getByText("已整理 0 / 7 条，剩余 7 条")).toBeVisible();
+    bulkExtract = { ...bulkExtract, remaining: 4 };
+    await advancePoll();
+    expect(screen.getByText("已整理 3 / 7 条，剩余 4 条")).toBeVisible();
+    await clickAction("暂停整理", false);
+    expect(
+      screen.getByText("已暂停，已整理 3 / 7 条，剩余 4 条")
+    ).toBeVisible();
+    const callsAfterPause = getOverview.mock.calls.length;
+    await advancePoll();
+    expect(getOverview).toHaveBeenCalledTimes(callsAfterPause);
+    await clickAction("继续整理", true);
+    bulkExtract = { ...bulkExtract, active: false, remaining: 0 };
+    await advancePoll();
+    expect(screen.getByText("已整理 7 / 7 条，剩余 0 条")).toBeVisible();
+    expect(screen.getByRole("button", { name: "整理全部" })).toBeEnabled();
+    const callsAfterCompletion = getOverview.mock.calls.length;
+    await advancePoll();
+    expect(getOverview).toHaveBeenCalledTimes(callsAfterCompletion);
+  });
+
+  it.each([0, 7])(
+    "整理全部失败后可重试，上次整理 %i 条后空队列有提示",
+    async (total) => {
+      const emptyQueue = { ...idleBulkExtract, total };
+      vi.spyOn(memoryApi, "overview").mockResolvedValue({
+        ...overview,
+        status: { autoExtractEnabled: true, bulkExtract: emptyQueue },
+      });
+      vi.spyOn(memoryApi, "setBulkExtract")
+        .mockRejectedValueOnce(new Error("请稍后重试"))
+        .mockResolvedValue(emptyQueue);
+      await act(async () => {
+        render(<MemoryPage />);
+      });
+      const button = screen.getByRole("button", { name: "整理全部" });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("请稍后重试");
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(screen.getByText("暂无待整理的对话。")).toBeVisible();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+  );
 
   it("只在任务运行时轮询，完成后停止并在离开时取消请求", async () => {
     const running = { ...overview.syncJob, state: "running" as const };

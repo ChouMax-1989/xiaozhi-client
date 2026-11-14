@@ -1,6 +1,7 @@
 import type {
   MemoryAdminOverview,
   MemoryAdminSettings,
+  MemoryBulkExtractStatus,
   MemoryCaptureView,
   MemoryChatView,
   MemoryDetailView,
@@ -87,6 +88,11 @@ export const memoryApi = {
     request<MemoryAdminOverview>("/overview", { signal }),
   setAutoExtract: (enabled: boolean) =>
     request<{ enabled: boolean }>("/auto-extract", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
+  setBulkExtract: (enabled: boolean) =>
+    request<MemoryBulkExtractStatus>("/bulk-extract", {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),

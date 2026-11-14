@@ -143,6 +143,11 @@ try {
   assert.equal((await invoke(peer, "memory_read_sources", { automatic: true })).messages.length, 1);
   await setAutoExtract(false);
   assert.equal((await invoke(peer, "memory_read_sources", { automatic: true })).messages.length, 0);
+  const bulkResponse = await fetch(`${api}/api/memory/bulk-extract`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) });
+  assert.equal(bulkResponse.status, 200);
+  assert.deepEqual((await bulkResponse.json()).data, { active: true, total: 1, remaining: 1 });
+  assert.match((await opening()).autoExtract, /bulk:true/u);
+  assert.equal((await invoke(peer, "memory_read_sources", { bulk: true })).messages.length, 1);
   await setAutoExtract(true);
   const record = { requestId: "endpoint-smoke-turn-1", conversationId: "synthetic-chat", role: "user", content: '  中文😀 e\u0301 "引号" \\ \n\t尾\r\n'.repeat(270) };
   assert.ok(record.content.length <= 8000);
@@ -195,6 +200,7 @@ try {
   assert.equal(captured.capture.text, candidateText);
   assert.equal((await invoke(peer, "memory_finish_sources", { sources: sourceRows.map((row) => ({ messageId: row.sourceId, revision: row.revision })), reason: "合成原文均已完整读取" })).processed, 4);
   assert.ok(receipt.receiptId);
+  assert.deepEqual((await invoke(peer, "memory_status")).bulkExtract, { active: false, total: 1, remaining: 0 });
   assert.equal((await opening()).autoExtract, undefined);
   async function toggle(action) {
     const response = await fetch(`${api}/api/tools/mcp/manage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, serverName: "memory", toolName: "memory_record_turn" }) });

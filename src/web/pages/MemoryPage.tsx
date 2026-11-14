@@ -1,4 +1,5 @@
 import { ManagementPage } from "@/components/management-page";
+import { MemoryBulkExtract } from "@/components/memory/memory-bulk-extract";
 import { MemoryCategory } from "@/components/memory/memory-categories";
 import { MemoryChats } from "@/components/memory/memory-chats";
 import {
@@ -84,19 +85,33 @@ export default function MemoryPage() {
     setSettingsRevision((value) => value + 1);
   }, [onChanged]);
   const state = overview.data?.syncJob.state;
+  const bulkExtract = overview.data?.status?.bulkExtract;
+  const remaining = bulkExtract?.remaining;
+  const previousRemaining = useRef(remaining);
 
   useEffect(() => {
-    if (state !== "running" || overview.loading || overview.error) return;
-    const timeout = window.setTimeout(refreshOverview, 2000);
+    if (overview.loading || overview.error) return;
+    if (state !== "running" && !bulkExtract?.active) return;
+    const timeout = window.setTimeout(
+      refreshOverview,
+      state === "running" ? 2000 : 5000
+    );
     return () => window.clearTimeout(timeout);
-  }, [state, overview.loading, overview.error, refreshOverview]);
+  }, [state, bulkExtract, overview.loading, overview.error, refreshOverview]);
 
   useEffect(() => {
-    if (previousSync.current === "running" && state && state !== "running") {
+    const syncFinished =
+      previousSync.current === "running" && state && state !== "running";
+    const batchFinished =
+      remaining !== undefined &&
+      previousRemaining.current !== undefined &&
+      remaining < previousRemaining.current;
+    if (syncFinished || batchFinished) {
       setRevision((value) => value + 1);
     }
     previousSync.current = state ?? null;
-  }, [state]);
+    previousRemaining.current = remaining;
+  }, [state, remaining]);
 
   async function startSync() {
     setSyncStarting(true);
@@ -315,8 +330,7 @@ export default function MemoryPage() {
                   id="memory-auto-extract-help"
                   className="text-sm text-muted-foreground"
                 >
-                  开启后，下次聊天时小智会通过 MCP
-                  整理少量待处理对话。首次使用请先
+                  开启后，每次开聊时小智最多整理两条待处理原文。首次使用请先
                   <button
                     type="button"
                     className="text-foreground underline underline-offset-4"
@@ -332,6 +346,21 @@ export default function MemoryPage() {
                   </p>
                 ) : null}
               </div>
+              <MemoryBulkExtract
+                status={bulkExtract}
+                loading={overview.loading || Boolean(overview.error)}
+                onSaved={(saved) => {
+                  overview.setData((value) =>
+                    value?.status
+                      ? {
+                          ...value,
+                          status: { ...value.status, bulkExtract: saved },
+                        }
+                      : value
+                  );
+                  refreshOverview();
+                }}
+              />
               <MemoryCategory
                 category="user_profile"
                 title="用户画像"

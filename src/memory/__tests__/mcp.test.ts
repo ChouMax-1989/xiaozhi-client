@@ -287,6 +287,59 @@ describe("本地记忆 MCP 真实协议集成", () => {
     }
   });
 
+  it("整理全部在同一对话中接力下一批，暂停后不领取，完成后停止提示", async () => {
+    const messages = Array.from({ length: 13 }, (_, i) =>
+      archive(String(i), i ? "你好" : "我喝咖啡不加糖。")
+    );
+    store.upsertMessages(messages);
+    store.setBulkExtractEnabled(true);
+    const read = async () =>
+      decoded<{ messages: SourceView[] }>(
+        await call("memory_read_sources", { bulk: true })
+      ).messages;
+    const finish = async (messages: SourceView[]) =>
+      decoded(
+        await call("memory_finish_sources", {
+          sources: messages.map(({ sourceId, revision }) => ({
+            messageId: sourceId,
+            revision,
+          })),
+          reason: "已审阅",
+        })
+      );
+    expect(
+      decoded(await call("memory_search", { chatStart: true }))
+    ).toMatchObject({ autoExtract: expect.stringContaining("bulk:true") });
+    const batch = await read();
+    expect(batch).toHaveLength(12);
+    const proposalInput = proposal(batch[0].sourceId, batch[0].content);
+    expect((await call("memory_submit", proposalInput)).isError).not.toBe(true);
+    expect(await finish(batch)).toMatchObject({
+      autoExtract: expect.stringContaining("bulk:true"),
+      bulkExtract: { remaining: 1 },
+    });
+    store.setBulkExtractEnabled(false);
+    expect(await read()).toEqual([]);
+    store.setAutoExtractEnabled(true);
+    expect(
+      decoded(await call("memory_search", { chatStart: true }))
+    ).not.toHaveProperty("autoExtract");
+    expect(
+      decoded<{ messages: SourceView[] }>(
+        await call("memory_read_sources", { automatic: true })
+      ).messages
+    ).toEqual([]);
+    store.setBulkExtractEnabled(true);
+    const last = await read();
+    expect(last).toHaveLength(1);
+    expect(await finish(last)).not.toHaveProperty("autoExtract");
+    expect(await read()).toEqual([]);
+    expect(
+      decoded(await call("memory_search", { chatStart: true }))
+    ).not.toHaveProperty("autoExtract");
+    expect(store.status().activeMemories).toBe(1);
+  });
+
   it("完成读原文、幂等提交、概要和来源改版失效的端到端流程", async () => {
     const original = archive("消息甲", "我喝咖啡不加糖。");
     store.upsertMessages([original]);

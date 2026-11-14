@@ -81,12 +81,21 @@ export interface MemoryAdminCounts {
   summaries: number;
 }
 
+export interface MemoryBulkExtractStatus {
+  active: boolean;
+  total: number;
+  remaining: number;
+}
+
 export interface MemoryAdminOverview {
   settings: MemoryAdminSettings;
   ready: boolean;
   error: string | null;
   counts: MemoryAdminCounts | null;
-  status: { autoExtractEnabled: boolean } | null;
+  status: {
+    autoExtractEnabled: boolean;
+    bulkExtract: MemoryBulkExtractStatus;
+  } | null;
   sync: Record<string, unknown> | null;
   syncJob: MemorySyncJob;
   extractionPrompt: string;
@@ -114,6 +123,7 @@ export type { MemoryRecord, SummaryRecord } from "../memory/types.js";
 export type MemoryAdminRequest =
   | { action: "status" }
   | { action: "setAutoExtractEnabled"; enabled: boolean }
+  | { action: "setBulkExtractEnabled"; enabled: boolean }
   | { action: "chats"; query?: string; page?: number; pageSize?: number }
   | {
       action: "messages";

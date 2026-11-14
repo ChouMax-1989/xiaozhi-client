@@ -541,10 +541,18 @@ export class MemoryAdminService {
       const status = (await this.execute({ action: "status" })) as {
         counts: MemoryAdminCounts;
         autoExtractEnabled: boolean;
+        bulkExtract?: { active: boolean; total: number; remaining: number };
         sync: Record<string, unknown> | null;
       };
       overview.counts = status.counts;
-      overview.status = { autoExtractEnabled: status.autoExtractEnabled };
+      overview.status = {
+        autoExtractEnabled: status.autoExtractEnabled,
+        bulkExtract: status.bulkExtract ?? {
+          active: false,
+          total: 0,
+          remaining: 0,
+        },
+      };
       overview.sync = status.sync;
       overview.ready = true;
       overview.settings = this.getSettings();

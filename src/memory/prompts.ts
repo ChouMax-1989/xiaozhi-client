@@ -16,7 +16,7 @@ export const MEMORY_EXTRACTION_RULES = `你正在为当前本地记忆库整理�
 14. 工具结果 segmented=true 时先用 memory_read_result 按 nextOffset 完成传输续读，拼接 chunk 校验后解析 JSON；再按原文自身 nextOffset 使用 memory_read_source。工具名前缀以实际列表为准。`;
 
 export function memoryRolePrompt(serviceName = "memory") {
-  return `新对话先用 ${serviceName}__memory_search（chatStart=true）查记忆，若返回 autoExtract，就按提示整理一批旧对话。用户提起往事时再查相关记忆。
+  return `新对话先用 ${serviceName}__memory_search（chatStart=true）查记忆；收到 autoExtract 就按提示整理，回执提示继续时接着处理下一批。用户提起往事时再查相关记忆。
 每轮用 ${serviceName}__memory_record_turn 逐条保存用户原话、你的回复和其他工具的结果。
 用户说到偏好、计划或重要经历时，用 ${serviceName}__memory_read_sources 读取本次对话的原话，再用 ${serviceName}__memory_submit 保存值得记住的内容。
 用户请你操作设备时，调用对应工具，按结果回答。`;

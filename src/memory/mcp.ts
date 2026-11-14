@@ -26,6 +26,19 @@ const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_TTL_MS = 120_000;
 const identifierSchema = z.string().min(1).max(200);
 const emptySchema = z.object({}).strict();
+const bulkInstruction =
+  "调用 memory_read_sources(bulk:true) 整理一批。读全原文，提交值得保存的记忆，用 memory_finish_sources 标记已处理的消息。按回执继续取下一批，直到完成或暂停。";
+
+function openingTask(store: MemoryStore) {
+  if (store.getBulkExtractStatus().active)
+    return { autoExtract: bulkInstruction };
+  if (store.getAutoExtractEnabled() && store.hasPendingSources())
+    return {
+      autoExtract:
+        "调用 memory_read_sources(automatic:true)，只整理这批，按原文保存记忆并标记已读完的来源，然后继续聊天。",
+    };
+  return {};
+}
 
 /** 底层解析或文件错误可能含原文和路径，只向调用者返回固定说明。 */
 export function safeMemoryError(error: unknown): string {
@@ -350,6 +363,12 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
             .literal(true)
             .optional()
             .describe("开聊自动提炼时传 true，按网页开关读取一小批待整理消息"),
+          bulk: z
+            .literal(true)
+            .optional()
+            .describe(
+              "网页「整理全部」任务：传 true 读取下一批，忽略游标。先完成本批再取下一批。"
+            ),
           limit: z.number().int().min(1).max(12).default(4),
         })
         .strict(),
@@ -357,15 +376,26 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     },
     (args) =>
       run(() => {
-        if (args.automatic && !store.getAutoExtractEnabled())
+        if (!args.bulk && args.automatic && !store.getAutoExtractEnabled())
           return {
             messages: [],
             nextCursor: null,
             note: "自动提炼已关闭，继续聊天。",
           };
         const page = store.readSources(
-          args.automatic ? { pendingOnly: true, limit: 2 } : args
+          args.bulk
+            ? { bulk: true, limit: 12 }
+            : args.automatic
+              ? { pendingOnly: true, limit: 2, skipBulkQueue: true }
+              : args
         );
+        if (args.bulk && !page.messages.length)
+          return {
+            messages: [],
+            nextCursor: null,
+            bulkExtract: store.getBulkExtractStatus(),
+            note: "本次没有可领取的消息，结束整理。",
+          };
         const emptyMessages = page.messages.map((source) =>
           sourceView(store, source, 0, 0)
         );
@@ -394,7 +424,13 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         return {
           rules: MEMORY_EXTRACTION_RULES,
           messages,
-          nextCursor: page.nextCursor,
+          nextCursor: args.bulk ? null : page.nextCursor,
+          ...(args.bulk
+            ? {
+                instruction:
+                  "本批完整处理后调用 memory_finish_sources；若回执要求继续，仍用 bulk:true 读取下一批。",
+              }
+            : {}),
           relatedMemories,
           omittedRelatedMemories: related.length - relatedMemories.length,
           note: "旧记忆仅作比较参考，不能代替原始来源。可使用短关键词继续 memory_search；raw 信封完整保存在本机档案中。",
@@ -511,14 +547,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           .slice(0, args.limit - provisionalCaptures.length)
           .map((memory) => memoryView(store, memory));
         return {
-          ...(args.chatStart &&
-          store.getAutoExtractEnabled() &&
-          store.hasPendingSources()
-            ? {
-                autoExtract:
-                  "调用 memory_read_sources(automatic:true)，只整理这批，按原文保存记忆并标记已读完的来源，然后继续聊天。",
-              }
-            : {}),
+          ...(args.chatStart ? openingTask(store) : {}),
           memories,
           ...(args.includeCandidates ? { provisionalCaptures } : {}),
           hasMore:
@@ -569,7 +598,21 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         .strict(),
       annotations: { ...write, destructiveHint: false, idempotentHint: true },
     },
-    ({ sources, reason }) => run(() => store.finishSources(sources, reason))
+    ({ sources, reason }) =>
+      run(() => {
+        const result = store.finishSources(sources, reason);
+        const bulkExtract = store.getBulkExtractStatus();
+        return {
+          ...result,
+          ...(bulkExtract.total > 0 ? { bulkExtract } : {}),
+          ...(bulkExtract.active
+            ? {
+                autoExtract:
+                  "继续调用 memory_read_sources(bulk:true) 取下一批。",
+              }
+            : {}),
+        };
+      })
   );
 
   server.registerTool(

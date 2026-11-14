@@ -36,6 +36,12 @@ const requestSchema = z.discriminatedUnion("action", [
       enabled: z.boolean(),
     })
     .strict(),
+  z
+    .object({
+      action: z.literal("setBulkExtractEnabled"),
+      enabled: z.boolean(),
+    })
+    .strict(),
   z.object({ action: z.literal("chats"), ...paginationShape }).strict(),
   z
     .object({
@@ -179,12 +185,16 @@ export async function executeAdminRequest(
           counts,
           sync: status.sync,
           autoExtractEnabled: status.autoExtractEnabled,
+          bulkExtract: status.bulkExtract,
         };
         break;
       }
       case "setAutoExtractEnabled":
         store.setAutoExtractEnabled(input.enabled);
         data = { enabled: input.enabled };
+        break;
+      case "setBulkExtractEnabled":
+        data = store.setBulkExtractEnabled(input.enabled);
         break;
       case "chats":
         data = store.listChats({

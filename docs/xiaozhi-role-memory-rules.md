@@ -5,7 +5,7 @@
 工具名以小智实际发现的列表为准；服务名为 memory 时通常是 memory__memory_search 等。工具启停或升级后，让小智重新发现工具或重连。此操作不需要网页登录凭据，不开启自动同步；角色介绍需要你在准备部署后粘贴，本次没有改动官方控制台。
 
 ```text
-新对话先用 memory__memory_search（chatStart=true）查记忆，若返回 autoExtract，就按提示整理一批旧对话。用户提起往事时再查相关记忆。
+新对话先用 memory__memory_search（chatStart=true）查记忆；收到 autoExtract 就按提示整理，回执提示继续时接着处理下一批。用户提起往事时再查相关记忆。
 每轮用 memory__memory_record_turn 逐条保存用户原话、你的回复和其他工具的结果。
 用户说到偏好、计划或重要经历时，用 memory__memory_read_sources 读取本次对话的原话，再用 memory__memory_submit 保存值得记住的内容。
 用户请你操作设备时，调用对应工具，按结果回答。

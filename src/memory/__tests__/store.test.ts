@@ -47,6 +47,80 @@ describe("有来源的本地记忆存储", () => {
     return result;
   }
 
+  it(
+    "一万多条历史分批整理，重开数据库仍保留进度，新增消息留待下一次",
+    { timeout: 60_000 },
+    () => {
+      const count = 11_279;
+      for (let start = 0; start < count; start += 1000) {
+        store.upsertMessages(
+          Array.from({ length: Math.min(1000, count - start) }, (_, i) => ({
+            chatId: "旧对话",
+            id: String(start + i),
+            role: "user",
+            content: "合成消息",
+            createdAt: null,
+            raw: {},
+          }))
+        );
+      }
+      expect(store.setBulkExtractEnabled(true)).toEqual({
+        active: true,
+        total: count,
+        remaining: count,
+      });
+      const finish = (messages: SourceMessage[]) =>
+        store.finishSources(
+          messages.map(({ sourceId, revision }) => ({
+            messageId: sourceId,
+            revision,
+          })),
+          "已审阅"
+        );
+      const first = store.readSources({ bulk: true, limit: 12 }).messages;
+      finish(first.slice(0, 5));
+      store.close();
+      store = new MemoryStore(join(directory, "memory.sqlite"), {
+        agentId: "test-agent",
+      });
+      expect(store.getBulkExtractStatus().remaining).toBe(count - 5);
+      expect(store.readSources({ bulk: true, limit: 1 }).messages[0].id).toBe(
+        first[5].id
+      );
+      store.upsertMessages([
+        {
+          chatId: "新聊天",
+          id: "新消息",
+          role: "user",
+          content: "刚加入",
+          createdAt: null,
+          raw: {},
+        },
+      ]);
+      expect(store.setBulkExtractEnabled(false).remaining).toBe(count - 5);
+      expect(store.readSources({ bulk: true }).messages).toEqual([]);
+      expect(store.setBulkExtractEnabled(true).total).toBe(count);
+      let processed = 5;
+      while (processed < count) {
+        const batch = store.readSources({ bulk: true, limit: 12 }).messages;
+        expect(batch.length).toBeGreaterThan(0);
+        finish(batch);
+        processed += batch.length;
+      }
+      expect(store.getBulkExtractStatus()).toEqual({
+        active: false,
+        total: count,
+        remaining: 0,
+      });
+      expect(store.readSources().messages.map((m) => m.id)).toEqual(["新消息"]);
+      expect(store.setBulkExtractEnabled(true)).toEqual({
+        active: true,
+        total: 1,
+        remaining: 1,
+      });
+    }
+  );
+
   function proposal(
     message: SourceMessage,
     overrides: Partial<MemoryProposal> = {}

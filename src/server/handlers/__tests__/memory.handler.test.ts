@@ -179,6 +179,30 @@ describe("记忆管理 HTTP 安全与契约", () => {
     expect(worker.run).not.toHaveBeenCalled();
   });
 
+  it("整理全部开关严格校验并透传工作进程的状态", async () => {
+    const url = `${origin}/api/memory/bulk-extract`;
+    const send = (body: unknown) =>
+      app.request(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    for (const body of [{}, { enabled: "true" }, { enabled: true, extra: 1 }]) {
+      expect((await send(body)).status).toBe(400);
+    }
+    expect(worker.run).not.toHaveBeenCalled();
+    const state = { active: true, total: 10, remaining: 3 };
+    vi.mocked(worker.run).mockResolvedValue(state);
+    const response = await send({ enabled: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: state });
+    expect(worker.run).toHaveBeenCalledWith(
+      { action: "setBulkExtractEnabled", enabled: true },
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
   it("自动提炼开关只接受布尔值并通过管理工作进程更新", async () => {
     const url = `${origin}/api/memory/auto-extract`;
     const send = (body: unknown) =>

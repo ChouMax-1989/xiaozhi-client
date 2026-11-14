@@ -254,6 +254,13 @@ export class MemoryApiHandler {
     });
   }
 
+  setBulkExtract(c: Context<AppContext>): Promise<Response> {
+    return this.respond(c, async () => {
+      const { enabled } = await this.body(c, autoExtractSchema);
+      return this.service.execute({ action: "setBulkExtractEnabled", enabled });
+    });
+  }
+
   saveCredential(c: Context<AppContext>): Promise<Response> {
     return this.respond(c, async () =>
       this.service.saveCredential(

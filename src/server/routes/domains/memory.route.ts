@@ -21,6 +21,11 @@ export const memoryRoutes: RouteDefinition[] = [
   },
   {
     method: "PUT",
+    path: "/api/memory/bulk-extract",
+    handler: h((handler, c) => handler.setBulkExtract(c)),
+  },
+  {
+    method: "PUT",
     path: "/api/memory/settings",
     handler: h((handler, c) => handler.saveSettings(c)),
   },

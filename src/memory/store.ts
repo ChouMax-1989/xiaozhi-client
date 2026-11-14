@@ -164,6 +164,10 @@ export class MemoryStore {
           processed_revision INTEGER NOT NULL DEFAULT 0, json TEXT NOT NULL, fingerprint TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS messages_chat ON messages(chat_id, id);
+        CREATE TABLE IF NOT EXISTS bulk_extract_job (
+          id INTEGER PRIMARY KEY CHECK(id = 1), enabled INTEGER NOT NULL, total INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS bulk_extract_queue (message_id TEXT NOT NULL UNIQUE);
         CREATE TABLE IF NOT EXISTS message_versions (
           id TEXT NOT NULL, revision INTEGER NOT NULL, json TEXT NOT NULL,
           PRIMARY KEY (id, revision)
@@ -497,6 +501,8 @@ export class MemoryStore {
       afterId?: string;
       limit?: number;
       pendingOnly?: boolean;
+      bulk?: boolean;
+      skipBulkQueue?: boolean;
     } = {}
   ) {
     const limit = Math.max(1, Math.min(options.limit ?? 20, 50));
@@ -509,17 +515,26 @@ export class MemoryStore {
         throw new MemoryError("消息游标不存在，请从本批原文开头重新读取");
       afterRow = Number(cursor.position);
     }
-    const rows = this.db
-      .prepare(`SELECT json, processed_revision FROM messages
+    const rows = options.bulk
+      ? this.db
+          .prepare(`SELECT m.json, m.processed_revision FROM bulk_extract_queue q
+          JOIN messages m ON m.id = q.message_id
+          WHERE EXISTS (SELECT 1 FROM bulk_extract_job WHERE enabled = 1)
+          ORDER BY q.rowid LIMIT ?`)
+          .all(limit + 1)
+      : this.db
+          .prepare(`SELECT json, processed_revision FROM messages
       WHERE (? IS NULL OR chat_id = ?) AND rowid > ? AND (? = 0 OR processed_revision < revision)
+      AND (? = 0 OR id NOT IN (SELECT message_id FROM bulk_extract_queue))
       ORDER BY rowid LIMIT ?`)
-      .all(
-        options.chatId ?? null,
-        options.chatId ?? null,
-        afterRow,
-        options.pendingOnly === false ? 0 : 1,
-        limit + 1
-      );
+          .all(
+            options.chatId ?? null,
+            options.chatId ?? null,
+            afterRow,
+            options.pendingOnly === false ? 0 : 1,
+            options.skipBulkQueue ? 1 : 0,
+            limit + 1
+          );
     const messages = rows.slice(0, limit).map((row) => ({
       ...(parseRow<SourceMessage>(row) as SourceMessage),
       processedRevision: Number(row.processed_revision),
@@ -564,6 +579,9 @@ export class MemoryStore {
         this.db
           .prepare("UPDATE messages SET processed_revision = ? WHERE id = ?")
           .run(ref.revision, ref.messageId);
+        this.db
+          .prepare("DELETE FROM bulk_extract_queue WHERE message_id = ?")
+          .run(ref.messageId);
       }
       const operationId = randomUUID();
       this.db.prepare("INSERT INTO operations VALUES (?, ?)").run(
@@ -1443,6 +1461,43 @@ export class MemoryStore {
     );
   }
 
+  getBulkExtractStatus() {
+    const row = this.db
+      .prepare(`SELECT enabled, total,
+      (SELECT COUNT(*) FROM bulk_extract_queue) AS remaining FROM bulk_extract_job WHERE id = 1`)
+      .get();
+    const remaining = Number(row?.remaining ?? 0);
+    return {
+      active: row?.enabled === 1 && remaining > 0,
+      total: Number(row?.total ?? 0),
+      remaining,
+    };
+  }
+
+  setBulkExtractEnabled(enabled: boolean) {
+    return this.transaction(() => {
+      const current = this.getBulkExtractStatus();
+      if (enabled && current.remaining === 0) {
+        // 仅收录点击时尚待处理的消息，整理过程中新产生的聊天留给下次任务。
+        const inserted = this.db
+          .prepare(`INSERT INTO bulk_extract_queue(message_id)
+          SELECT id FROM messages WHERE processed_revision < revision ORDER BY rowid`)
+          .run();
+        if (inserted.changes)
+          this.db
+            .prepare(
+              "INSERT OR REPLACE INTO bulk_extract_job(id, enabled, total) VALUES (1, 1, ?)"
+            )
+            .run(inserted.changes);
+      } else {
+        this.db
+          .prepare("UPDATE bulk_extract_job SET enabled = ? WHERE id = 1")
+          .run(enabled ? 1 : 0);
+      }
+      return this.getBulkExtractStatus();
+    });
+  }
+
   setAutoExtractEnabled(enabled: boolean): void {
     this.db
       .prepare(
@@ -1455,7 +1510,7 @@ export class MemoryStore {
     return Boolean(
       this.db
         .prepare(
-          "SELECT 1 FROM messages WHERE processed_revision < revision LIMIT 1"
+          "SELECT 1 FROM messages WHERE processed_revision < revision AND id NOT IN (SELECT message_id FROM bulk_extract_queue) LIMIT 1"
         )
         .get()
     );
@@ -1469,6 +1524,7 @@ export class MemoryStore {
     return {
       agentId: this.agentId,
       autoExtractEnabled: this.getAutoExtractEnabled(),
+      bulkExtract: this.getBulkExtractStatus(),
       identityMode: this.ownerId
         ? "explicit_single_person"
         : "unknown_per_chat",
