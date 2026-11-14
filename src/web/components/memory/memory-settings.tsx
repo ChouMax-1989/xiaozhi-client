@@ -180,7 +180,7 @@ export function MemorySettingsForm({
             基础设置
           </h3>
           <p className="text-sm text-muted-foreground">
-            将提示词追加到小智的「角色介绍」，让它调用本地记忆库。
+            复制下方提示词，在小智的「角色介绍」中追加，或替换旧版记忆规则。保留原有人设，保存一次即可。
           </p>
         </div>
         <MemoryRecordingRules prompt={recordingPrompt} />

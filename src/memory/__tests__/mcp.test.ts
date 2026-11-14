@@ -226,6 +226,67 @@ describe("本地记忆 MCP 真实协议集成", () => {
     expect(store.status().memories).toBe(0);
   });
 
+  it("新对话按网页开关分批整理旧消息，中断后继续且不重复读取已完成的版本", async () => {
+    const opening = async () =>
+      decoded(await call("memory_search", { chatStart: true }));
+    const batch = async () =>
+      decoded<{ messages: SourceView[] }>(
+        await call("memory_read_sources", { automatic: true })
+      );
+    const admin = new MemoryStore(options.databasePath, options);
+    try {
+      store.upsertMessages([
+        archive("甲", "我喝咖啡不加糖。"),
+        archive("乙", "好的。"),
+        archive("丙", "明天见。"),
+      ]);
+      expect(await opening()).not.toHaveProperty("autoExtract");
+      expect((await batch()).messages).toHaveLength(0);
+      admin.setAutoExtractEnabled(true);
+      expect(decoded(await call("memory_search"))).not.toHaveProperty(
+        "autoExtract"
+      );
+      expect(await opening()).toHaveProperty("autoExtract");
+      const first = (await batch()).messages;
+      expect(first).toHaveLength(2);
+      expect(
+        (
+          await call(
+            "memory_submit",
+            proposal(first[0].sourceId, first[0].content)
+          )
+        ).isError
+      ).not.toBe(true);
+      const finish = (messages: SourceView[]) =>
+        call("memory_finish_sources", {
+          sources: messages.map(({ sourceId, revision }) => ({
+            messageId: sourceId,
+            revision,
+          })),
+          reason: "已读完并保存值得记住的内容",
+        });
+      expect((await finish(first.slice(0, 1))).isError).not.toBe(true);
+      expect(await opening()).toHaveProperty("autoExtract");
+      admin.setAutoExtractEnabled(false);
+      expect((await batch()).messages).toHaveLength(0);
+      expect(
+        decoded<{ messages: SourceView[] }>(await call("memory_read_sources"))
+          .messages
+      ).toHaveLength(2);
+      admin.setAutoExtractEnabled(true);
+      const remaining = (await batch()).messages;
+      expect(remaining.map(({ content }) => content)).toEqual([
+        "好的。",
+        "明天见。",
+      ]);
+      expect((await finish(remaining)).isError).not.toBe(true);
+      expect(await opening()).not.toHaveProperty("autoExtract");
+      expect(store.status().memories).toBe(1);
+    } finally {
+      admin.close();
+    }
+  });
+
   it("完成读原文、幂等提交、概要和来源改版失效的端到端流程", async () => {
     const original = archive("消息甲", "我喝咖啡不加糖。");
     store.upsertMessages([original]);

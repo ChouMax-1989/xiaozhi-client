@@ -84,6 +84,41 @@ describe("本机记忆管理查询与审计", () => {
     };
   }
 
+  it("管理开关通过绑定检查写入并在状态中读取", async () => {
+    expect(
+      await executeAdminRequest(store, { action: "status" }, options)
+    ).toMatchObject({
+      success: true,
+      data: { autoExtractEnabled: false },
+    });
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "setAutoExtractEnabled", enabled: true },
+        options
+      )
+    ).toEqual({
+      success: true,
+      data: { enabled: true },
+    });
+    expect(
+      await executeAdminRequest(store, { action: "status" }, options)
+    ).toMatchObject({
+      success: true,
+      data: { autoExtractEnabled: true },
+    });
+    expect(
+      await executeAdminRequest(
+        store,
+        { action: "setAutoExtractEnabled", enabled: false },
+        options
+      )
+    ).toEqual({
+      success: true,
+      data: { enabled: false },
+    });
+  });
+
   it("永久删除仅目标记忆、版本和派生概要，并拒绝旧请求与撤销恢复", async () => {
     const message = source();
     const input = proposal(message, {

@@ -85,6 +85,21 @@ describe("记忆管理配置与任务", () => {
     expect(worker.run).not.toHaveBeenCalled();
   });
 
+  it("概览透传工作进程的自动提炼状态", async () => {
+    configure();
+    vi.mocked(worker.run).mockResolvedValue({
+      counts: {},
+      sync: null,
+      autoExtractEnabled: true,
+    });
+    const overview = await new MemoryAdminService({
+      config,
+      worker,
+    }).getOverview();
+    expect(overview.status).toEqual({ autoExtractEnabled: true });
+    expect(overview.settings.restartRequired).toBe(false);
+  });
+
   it("初始化使用固定入口和数据库，保存后明确需要重启", async () => {
     const service = new MemoryAdminService({ config, worker });
     expect(service.getSettings()).toMatchObject({

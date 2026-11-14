@@ -34,6 +34,7 @@ vi.mock("@/components/memory/memory-categories", () => ({
 
 const overview: MemoryAdminOverview = {
   ready: true,
+  status: { autoExtractEnabled: false },
   error: null,
   counts: null,
   sync: null,

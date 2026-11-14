@@ -85,6 +85,11 @@ async function download(path: string, fileName: string) {
 export const memoryApi = {
   overview: (signal?: AbortSignal) =>
     request<MemoryAdminOverview>("/overview", { signal }),
+  setAutoExtract: (enabled: boolean) =>
+    request<{ enabled: boolean }>("/auto-extract", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
   settings: (signal?: AbortSignal) =>
     request<MemoryAdminSettings>("/settings", { signal }),
   saveSettings: (settings: MemorySettingsInput) =>

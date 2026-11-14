@@ -86,6 +86,7 @@ export interface MemoryAdminOverview {
   ready: boolean;
   error: string | null;
   counts: MemoryAdminCounts | null;
+  status: { autoExtractEnabled: boolean } | null;
   sync: Record<string, unknown> | null;
   syncJob: MemorySyncJob;
   extractionPrompt: string;
@@ -112,6 +113,7 @@ export type { MemoryRecord, SummaryRecord } from "../memory/types.js";
 /** 仅由本机管理进程调用的工作进程协议，不向模型注册。 */
 export type MemoryAdminRequest =
   | { action: "status" }
+  | { action: "setAutoExtractEnabled"; enabled: boolean }
   | { action: "chats"; query?: string; page?: number; pageSize?: number }
   | {
       action: "messages";

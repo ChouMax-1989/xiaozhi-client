@@ -26,6 +26,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { memoryError, useMemoryResource } from "@/hooks/useMemoryResource";
@@ -67,6 +69,8 @@ export default function MemoryPage() {
   const [settingsRevision, setSettingsRevision] = useState(0);
   const [selection, setSelection] = useState<MemorySelection | null>(null);
   const [syncStarting, setSyncStarting] = useState(false);
+  const [savingAutoExtract, setSavingAutoExtract] = useState(false);
+  const [autoExtractError, setAutoExtractError] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const previousSync = useRef<MemorySyncJob["state"] | null>(null);
@@ -117,6 +121,27 @@ export default function MemoryPage() {
       toast.success("整理提示已复制，请粘贴到小智聊天中发送。");
     } catch {
       setPromptOpen(true);
+    }
+  }
+
+  async function changeAutoExtract(enabled: boolean) {
+    setSavingAutoExtract(true);
+    setAutoExtractError(null);
+    try {
+      const saved = await memoryApi.setAutoExtract(enabled);
+      overview.setData((value) =>
+        value?.status
+          ? {
+              ...value,
+              status: { ...value.status, autoExtractEnabled: saved.enabled },
+            }
+          : value
+      );
+    } catch (error) {
+      setAutoExtractError(memoryError(error));
+    } finally {
+      refreshOverview();
+      setSavingAutoExtract(false);
     }
   }
 
@@ -269,6 +294,43 @@ export default function MemoryPage() {
                   <Copy data-icon="inline-start" />
                   复制整理提示
                 </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <Label htmlFor="memory-auto-extract">自动提炼</Label>
+                  <Switch
+                    id="memory-auto-extract"
+                    checked={data?.status?.autoExtractEnabled === true}
+                    disabled={
+                      typeof data?.status?.autoExtractEnabled !== "boolean" ||
+                      savingAutoExtract ||
+                      overview.loading ||
+                      Boolean(overview.error)
+                    }
+                    onCheckedChange={changeAutoExtract}
+                    aria-describedby="memory-auto-extract-help"
+                  />
+                </div>
+                <p
+                  id="memory-auto-extract-help"
+                  className="text-sm text-muted-foreground"
+                >
+                  开启后，下次聊天时小智会通过 MCP
+                  整理少量待处理对话。首次使用请先
+                  <button
+                    type="button"
+                    className="text-foreground underline underline-offset-4"
+                    onClick={() => setSettingsOpen(true)}
+                  >
+                    更新角色介绍
+                  </button>
+                  ，之后无需每次复制整理提示。
+                </p>
+                {autoExtractError ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    自动提炼设置保存失败：{autoExtractError}
+                  </p>
+                ) : null}
               </div>
               <MemoryCategory
                 category="user_profile"

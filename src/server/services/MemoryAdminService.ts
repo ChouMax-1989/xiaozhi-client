@@ -530,6 +530,7 @@ export class MemoryAdminService {
       ready: false,
       error: null,
       counts: null,
+      status: null,
       sync: null,
       syncJob: this.getSyncJob(),
       extractionPrompt: MEMORY_EXTRACTION_RULES,
@@ -539,9 +540,11 @@ export class MemoryAdminService {
     try {
       const status = (await this.execute({ action: "status" })) as {
         counts: MemoryAdminCounts;
+        autoExtractEnabled: boolean;
         sync: Record<string, unknown> | null;
       };
       overview.counts = status.counts;
+      overview.status = { autoExtractEnabled: status.autoExtractEnabled };
       overview.sync = status.sync;
       overview.ready = true;
       overview.settings = this.getSettings();

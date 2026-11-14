@@ -1435,6 +1435,32 @@ export class MemoryStore {
     });
   }
 
+  getAutoExtractEnabled(): boolean {
+    return (
+      this.db
+        .prepare("SELECT value FROM metadata WHERE key = 'autoExtract'")
+        .get()?.value === "1"
+    );
+  }
+
+  setAutoExtractEnabled(enabled: boolean): void {
+    this.db
+      .prepare(
+        "INSERT INTO metadata(key, value) VALUES ('autoExtract', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      )
+      .run(enabled ? "1" : "0");
+  }
+
+  hasPendingSources(): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          "SELECT 1 FROM messages WHERE processed_revision < revision LIMIT 1"
+        )
+        .get()
+    );
+  }
+
   status() {
     const count = (table: string) =>
       Number(
@@ -1442,6 +1468,7 @@ export class MemoryStore {
       );
     return {
       agentId: this.agentId,
+      autoExtractEnabled: this.getAutoExtractEnabled(),
       identityMode: this.ownerId
         ? "explicit_single_person"
         : "unknown_per_chat",

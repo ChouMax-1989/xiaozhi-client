@@ -45,6 +45,7 @@ const entriesSchema = pagingSchema
   })
   .strict();
 const emptySchema = z.object({}).strict();
+const autoExtractSchema = z.object({ enabled: z.boolean() }).strict();
 const sourceSchema = z
   .object({ revision: queryInteger(Number.MAX_SAFE_INTEGER).optional() })
   .strict();
@@ -244,6 +245,13 @@ export class MemoryApiHandler {
     return this.respond(c, async () =>
       this.service.saveSettings(await this.body(c, memorySettingsSchema))
     );
+  }
+
+  setAutoExtract(c: Context<AppContext>): Promise<Response> {
+    return this.respond(c, async () => {
+      const { enabled } = await this.body(c, autoExtractSchema);
+      return this.service.execute({ action: "setAutoExtractEnabled", enabled });
+    });
   }
 
   saveCredential(c: Context<AppContext>): Promise<Response> {

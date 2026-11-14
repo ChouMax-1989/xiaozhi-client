@@ -16,6 +16,11 @@ export const memoryRoutes: RouteDefinition[] = [
   },
   {
     method: "PUT",
+    path: "/api/memory/auto-extract",
+    handler: h((handler, c) => handler.setAutoExtract(c)),
+  },
+  {
+    method: "PUT",
     path: "/api/memory/settings",
     handler: h((handler, c) => handler.saveSettings(c)),
   },

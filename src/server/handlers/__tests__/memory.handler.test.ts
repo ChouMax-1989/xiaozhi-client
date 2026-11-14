@@ -179,6 +179,33 @@ describe("记忆管理 HTTP 安全与契约", () => {
     expect(worker.run).not.toHaveBeenCalled();
   });
 
+  it("自动提炼开关只接受布尔值并通过管理工作进程更新", async () => {
+    const url = `${origin}/api/memory/auto-extract`;
+    const send = (body: unknown) =>
+      app.request(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    for (const body of [{}, { enabled: "true" }, { enabled: true, extra: 1 }]) {
+      expect((await send(body)).status).toBe(400);
+    }
+    expect(worker.run).not.toHaveBeenCalled();
+    vi.mocked(worker.run).mockResolvedValue({ enabled: true });
+    const response = await send({ enabled: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      data: { enabled: true },
+    });
+    expect(worker.run).toHaveBeenCalledWith(
+      { action: "setAutoExtractEnabled", enabled: true },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(service.getSettings().restartRequired).toBe(false);
+  });
+
   it("设置拒绝额外路径字段、错误类型及过短自动同步间隔", async () => {
     const valid = {
       agentId: "agent-a",

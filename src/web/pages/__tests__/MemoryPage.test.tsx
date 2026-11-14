@@ -42,6 +42,7 @@ const overview: MemoryAdminOverview = {
     restartRequired: false,
   },
   ready: true,
+  status: null,
   error: null,
   counts: {
     chats: 1,
@@ -68,6 +69,70 @@ describe("记忆页面同步状态", () => {
     cleanup();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("自动提炼独立保存并可关闭，手动整理始终可用", async () => {
+    let enabled = false;
+    vi.spyOn(memoryApi, "overview").mockImplementation(async () => ({
+      ...overview,
+      settings: { ...overview.settings, tokenConfigured: false },
+      status: { autoExtractEnabled: enabled },
+    }));
+    const saveSettings = vi.spyOn(memoryApi, "saveSettings");
+    const sync = vi.spyOn(memoryApi, "sync");
+    const fetchMock = vi.fn<typeof fetch>(async (_url, options) => {
+      enabled = JSON.parse(String(options?.body)).enabled;
+      return new Response(JSON.stringify({ success: true, data: { enabled } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await act(async () => {
+      render(<MemoryPage />);
+    });
+    const toggle = screen.getByRole("switch", { name: "自动提炼" });
+    expect(toggle).not.toBeChecked();
+    for (const next of [true, false]) {
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/memory/auto-extract",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ enabled: next }),
+        })
+      );
+      expect(toggle).toHaveAttribute("aria-checked", String(next));
+      expect(
+        screen.getByRole("button", { name: "复制整理提示" })
+      ).toBeEnabled();
+    }
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "更新角色介绍" }));
+    });
+    expect(screen.getByRole("button", { name: "复制提示词" })).toBeEnabled();
+  });
+
+  it("保存失败显示原因，保留当前状态并允许重试", async () => {
+    vi.spyOn(memoryApi, "overview").mockResolvedValue({
+      ...overview,
+      status: { autoExtractEnabled: true },
+    });
+    vi.spyOn(memoryApi, "setAutoExtract").mockRejectedValue(
+      new Error("数据库暂时不可写")
+    );
+    await act(async () => {
+      render(<MemoryPage />);
+    });
+    const toggle = screen.getByRole("switch", { name: "自动提炼" });
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("数据库暂时不可写");
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
   });
 
   it("只在任务运行时轮询，完成后停止并在离开时取消请求", async () => {
@@ -123,6 +188,7 @@ describe("记忆页面同步状态", () => {
       render(<MemoryPage />);
     });
     expect(screen.getByRole("button", { name: "复制整理提示" })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "自动提炼" })).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: "导入旧对话" })
     ).not.toBeInTheDocument();

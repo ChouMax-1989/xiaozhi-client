@@ -130,6 +130,20 @@ try {
   assert.ok(names.includes("memory__memory_record_turn"));
   assert.ok(names.includes("memory__memory_read_result"));
   sizes.tools_list = Buffer.byteLength(JSON.stringify(listed));
+  const api = `http://127.0.0.1:${port}`;
+  async function setAutoExtract(enabled) {
+    const response = await fetch(`${api}/api/memory/auto-extract`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, { enabled });
+  }
+  const opening = () => invoke(peer, "memory_search", { chatStart: true });
+  assert.equal((await opening()).autoExtract, undefined);
+  await setAutoExtract(true);
+  assert.ok((await opening()).autoExtract);
+  assert.equal((await invoke(peer, "memory_read_sources", { automatic: true })).messages.length, 1);
+  await setAutoExtract(false);
+  assert.equal((await invoke(peer, "memory_read_sources", { automatic: true })).messages.length, 0);
+  await setAutoExtract(true);
   const record = { requestId: "endpoint-smoke-turn-1", conversationId: "synthetic-chat", role: "user", content: '  中文😀 e\u0301 "引号" \\ \n\t尾\r\n'.repeat(270) };
   assert.ok(record.content.length <= 8000);
   const receipt = await invoke(peer, "memory_record_turn", record);
@@ -181,7 +195,7 @@ try {
   assert.equal(captured.capture.text, candidateText);
   assert.equal((await invoke(peer, "memory_finish_sources", { sources: sourceRows.map((row) => ({ messageId: row.sourceId, revision: row.revision })), reason: "合成原文均已完整读取" })).processed, 4);
   assert.ok(receipt.receiptId);
-  const api = `http://127.0.0.1:${port}`;
+  assert.equal((await opening()).autoExtract, undefined);
   async function toggle(action) {
     const response = await fetch(`${api}/api/tools/mcp/manage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, serverName: "memory", toolName: "memory_record_turn" }) });
     assert.equal(response.status, 200);

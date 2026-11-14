@@ -346,6 +346,10 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
             .boolean()
             .default(true)
             .describe("默认只读取未处理或已改版来源"),
+          automatic: z
+            .literal(true)
+            .optional()
+            .describe("开聊自动提炼时传 true，按网页开关读取一小批待整理消息"),
           limit: z.number().int().min(1).max(12).default(4),
         })
         .strict(),
@@ -353,7 +357,15 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     },
     (args) =>
       run(() => {
-        const page = store.readSources(args);
+        if (args.automatic && !store.getAutoExtractEnabled())
+          return {
+            messages: [],
+            nextCursor: null,
+            note: "自动提炼已关闭，继续聊天。",
+          };
+        const page = store.readSources(
+          args.automatic ? { pendingOnly: true, limit: 2 } : args
+        );
         const emptyMessages = page.messages.map((source) =>
           sourceView(store, source, 0, 0)
         );
@@ -443,6 +455,12 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
       inputSchema: z
         .object({
           query: z.string().trim().max(200).optional(),
+          chatStart: z
+            .boolean()
+            .optional()
+            .describe(
+              "仅在新对话第一次查记忆时传 true，同时检查有无自动提炼任务"
+            ),
           category: z.enum(["user_profile", "situational"]).optional(),
           includeCandidates: z.boolean().default(false),
           includeHistory: z.boolean().default(false),
@@ -493,6 +511,14 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           .slice(0, args.limit - provisionalCaptures.length)
           .map((memory) => memoryView(store, memory));
         return {
+          ...(args.chatStart &&
+          store.getAutoExtractEnabled() &&
+          store.hasPendingSources()
+            ? {
+                autoExtract:
+                  "调用 memory_read_sources(automatic:true)，只整理这批，按原文保存记忆并标记已读完的来源，然后继续聊天。",
+              }
+            : {}),
           memories,
           ...(args.includeCandidates ? { provisionalCaptures } : {}),
           hasMore:

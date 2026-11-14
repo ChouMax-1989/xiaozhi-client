@@ -30,6 +30,12 @@ const paginationShape = {
 };
 const requestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status") }).strict(),
+  z
+    .object({
+      action: z.literal("setAutoExtractEnabled"),
+      enabled: z.boolean(),
+    })
+    .strict(),
   z.object({ action: z.literal("chats"), ...paginationShape }).strict(),
   z
     .object({
@@ -169,9 +175,17 @@ export async function executeAdminRequest(
           provisionalCaptures: status.provisionalCaptures,
           summaries: status.summaries,
         };
-        data = { counts, sync: status.sync };
+        data = {
+          counts,
+          sync: status.sync,
+          autoExtractEnabled: status.autoExtractEnabled,
+        };
         break;
       }
+      case "setAutoExtractEnabled":
+        store.setAutoExtractEnabled(input.enabled);
+        data = { enabled: input.enabled };
+        break;
       case "chats":
         data = store.listChats({
           query: input.query,
