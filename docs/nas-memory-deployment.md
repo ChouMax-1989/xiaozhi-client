@@ -1,8 +1,6 @@
 # NAS 部署小智本地记忆
 
-本手册用于 NAS 准备好之后部署；当前尚未在 NAS Docker 和真实小智云端验证，也没有执行部署。部署入口统一为你的 `ChouMax-1989/xiaozhi-client` 仓库的 `main` 分支，包含逐轮记录、1024字节分段续读、管理界面和动态记忆图谱。本批已验证基线为 `0e4e1e71fa99bff2f04fc07e9990ebe720f96b82`，后续部署使用包含该提交的最新 `main`，无需切回开发分支。旧 `c804ff9` 和上游已发布镜像不包含这批更新，须从源码重新构建。
-
-本地已通过3049项测试（6项跳过）、完整调用链及桌面/手机尺寸浏览器验收；手机结果来自Chrome触控仿真，不等同于真实手机或NAS验收。以下部署命令仅供准备就绪时使用，本次合并不会启动或更新家庭容器。
+NAS 准备好后，从 `ChouMax-1989/xiaozhi-client` 的最新 `main` 构建。功能提交 `99cffd1` 包含看板、独立的记忆图谱入口和按服务名生成的四句角色提示词。Compose 运行一个 `xiaozhi-client` 容器，网页、MCP 和 SQLite 共用这个容器。
 
 ## 1. 准备目录与构建
 
@@ -19,7 +17,7 @@ git clone --branch main \
 cd /volume1/docker/xiaozhi-client-src
 git log -1 --oneline
 # 返回0才表示包含已验证基线；不包含时先检查仓库和分支，停止部署。
-git merge-base --is-ancestor 0e4e1e71fa99bff2f04fc07e9990ebe720f96b82 HEAD || exit 1
+git merge-base --is-ancestor 99cffd186002073b3fc045c383a75c653d67dfb8 HEAD || exit 1
 docker compose -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml ps
 docker compose -f docker/docker-compose.yml logs --tail=100
@@ -29,7 +27,7 @@ docker compose -f docker/docker-compose.yml logs --tail=100
 
 ## 2. 配置接入点和记忆
 
-1. 打开 `http://NAS内网地址:9999`，按实际端口调整。先在客户端设置中填写当前智能体的**一个**完整官方 WSS MCP 接入点并保存。接入点包含敏感凭据，不贴到聊天、文档或日志中。
+1. 打开 `http://NAS内网地址:9999`，按实际端口调整。在顶部可切换「看板」「记忆库」「记忆图谱」。进入「看板 → 小智接入点」填写当前智能体的**一个**完整官方 WSS MCP 接入点并保存。接入点包含敏感凭据，不贴到聊天、文档或日志中。
 2. 进入「记忆库 → 设置」，填写该智能体 ID。多人共用或身份未确认时，人物身份标识留空；只有明确为同一人单独使用时才填写。保持自动同步间隔为 `0`，无需填写旧网页登录凭据，也无需另购模型 API。
 3. 保存后按提示重启容器，使用上一步同一组 Compose 环境变量：
 
@@ -37,8 +35,9 @@ docker compose -f docker/docker-compose.yml logs --tail=100
    docker compose -f docker/docker-compose.yml restart xiaozhi-client
    ```
 
-4. 在工具列表确认记忆服务的 11 个工具可见且已启用，包括 `memory__memory_record_turn` 和 `memory__memory_read_result`；服务名不同则前缀也不同，以实际列表为准。工具启停或列表变化后，需要让云端重新请求工具列表，必要时重新连接接入点。仅容器运行或网页可访问不能证明云端已发现工具。
-5. 将[角色记忆规则](xiaozhi-role-memory-rules.md)追加到对应小智智能体的角色介绍中，保留原有人设。真实对话后检查工具调用是否成功、是否收到保存回执，以及「对话记录」中是否出现模型提交的文本。来源标记为模型提交，不能保证平台所有原文、实际播报或历史都被完整采集；候选记忆也不能当成已确认事实。
+4. 在「看板 → 可用工具」确认记忆服务的 11 个工具已启用，再到小智控制台刷新接入点，确认云端已发现工具。使用官方语音时，「实时语音」卡片可留空。
+5. 到看板底部「小智角色提示词」点击「复制提示词」。在小智官方控制台选中同一智能体，打开「角色介绍」，开启「自定义」，将四句提示词追加到原有人设末尾，保存。升级时只替换旧的记忆规则。看板会填入当前服务的工具全名。[角色规则与示例](xiaozhi-role-memory-rules.md)
+6. 用一条测试偏好与小智对话，在「记忆库」核对双方原话、提炼条目和引用，再开新对话询问该偏好，在看板查看检索调用。「记忆图谱」可从顶部或 `/memory-graph` 打开，点击节点即可回看来源。准备关闭官方记忆时，先确认历史归档和提炼完成、备份本地库，并用一条仅存于本地的记忆验证跨会话检索。
 
 界面配置的默认数据库是容器内 `/workspaces/memory/archive.sqlite`，对应数据目录下的 `memory/archive.sqlite`。配置绑定单一智能体和端点；多个智能体使用各自独立实例及数据库，不要共用一个记忆库。
 
@@ -92,7 +91,7 @@ docker compose -f docker/docker-compose.yml restart xiaozhi-client
 git fetch origin
 git switch main
 git pull --ff-only origin main
-git merge-base --is-ancestor 0e4e1e71fa99bff2f04fc07e9990ebe720f96b82 HEAD || exit 1
+git merge-base --is-ancestor 99cffd186002073b3fc045c383a75c653d67dfb8 HEAD || exit 1
 git log -1 --oneline
 docker compose -f docker/docker-compose.yml up -d --build xiaozhi-client
 docker compose -f docker/docker-compose.yml ps
