@@ -1,6 +1,6 @@
 # NAS 部署小智本地记忆
 
-NAS 准备好后，从 `ChouMax-1989/xiaozhi-client` 的最新 `main` 构建。功能提交 `99cffd1` 包含看板、独立的记忆图谱入口和按服务名生成的四句角色提示词。Compose 运行一个 `xiaozhi-client` 容器，网页、MCP 和 SQLite 共用这个容器。
+NAS 准备好后，从 `ChouMax-1989/xiaozhi-client` 的最新 `main` 构建。提交 `0418357` 加入「自动提炼」和新版角色提示词。Compose 运行一个 `xiaozhi-client` 容器，网页、MCP 和 SQLite 共用这个容器。
 
 ## 1. 准备目录与构建
 
@@ -17,7 +17,7 @@ git clone --branch main \
 cd /volume1/docker/xiaozhi-client-src
 git log -1 --oneline
 # 返回0才表示包含已验证基线；不包含时先检查仓库和分支，停止部署。
-git merge-base --is-ancestor 99cffd186002073b3fc045c383a75c653d67dfb8 HEAD || exit 1
+git merge-base --is-ancestor 04183578c8eb29016c3be7394dfb9bf733e2f497 HEAD || exit 1
 docker compose -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml ps
 docker compose -f docker/docker-compose.yml logs --tail=100
@@ -92,7 +92,7 @@ docker compose -f docker/docker-compose.yml restart xiaozhi-client
 git fetch origin
 git switch main
 git pull --ff-only origin main
-git merge-base --is-ancestor 99cffd186002073b3fc045c383a75c653d67dfb8 HEAD || exit 1
+git merge-base --is-ancestor 04183578c8eb29016c3be7394dfb9bf733e2f497 HEAD || exit 1
 git log -1 --oneline
 docker compose -f docker/docker-compose.yml up -d --build xiaozhi-client
 docker compose -f docker/docker-compose.yml ps
