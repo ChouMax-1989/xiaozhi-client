@@ -25,7 +25,12 @@ vi.mock("@/components/memory/memory-chats", () => ({
   MemoryChats: () => <p>对话记录列表</p>,
 }));
 vi.mock("@/components/memory/memory-categories", () => ({
-  MemoryCategory: ({ title }: { title: string }) => <p>{title}</p>,
+  MemoryCategory: ({
+    title,
+    revision,
+  }: { title: string; revision: number }) => (
+    <p data-revision={revision}>{title}</p>
+  ),
 }));
 
 const overview: MemoryAdminOverview = {
@@ -173,6 +178,31 @@ describe("记忆页面同步状态", () => {
     await advancePoll(5000);
     expect(screen.getByText(/已整理 7 \/ 7 条，剩余 0 条/)).toBeVisible();
     expect(screen.getByRole("button", { name: "暂停整理" })).toBeEnabled();
+  });
+
+  it("两次轮询之间完成开聊任务也会刷新记忆列表", async () => {
+    const counts = overview.counts!;
+    vi.spyOn(memoryApi, "overview")
+      .mockResolvedValueOnce({
+        ...overview,
+        status: { autoExtractEnabled: true, bulkExtract: idleBulkExtract },
+      })
+      .mockResolvedValue({
+        ...overview,
+        counts: { ...counts, memories: counts.memories + 1 },
+        status: {
+          autoExtractEnabled: true,
+          bulkExtract: { ...idleBulkExtract, total: 2 },
+        },
+      });
+    await act(async () => {
+      render(<MemoryPage />);
+    });
+    expect(screen.getByText("用户画像")).toHaveAttribute("data-revision", "0");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+    expect(screen.getByText("用户画像")).toHaveAttribute("data-revision", "1");
   });
 
   it("暂停失败后显示原因，保留当前状态并允许重试", async () => {
