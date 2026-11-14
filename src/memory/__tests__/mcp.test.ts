@@ -72,7 +72,7 @@ describe("本地记忆 MCP 真实协议集成", () => {
         store.bindMetadata(key, value)
       )
     );
-    server = createMemoryServer(store, guard);
+    server = createMemoryServer(store, guard, "house");
     client = new Client({ name: "memory-protocol-test", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -288,6 +288,59 @@ describe("本地记忆 MCP 真实协议集成", () => {
     }
   });
 
+  it("开聊回执直接交付原文，检索重试不冒充已整理", async () => {
+    store.upsertMessages([archive("消息甲", "我喝咖啡不加糖。")]);
+    const opening = () =>
+      callRaw("memory_search", { chatStart: true, query: "周墨" });
+    const task = decoded<{ autoExtract: string; source: SourceView }>(
+      await opening()
+    );
+    expect(task.autoExtract).toContain("house__memory_submit");
+    expect(task.autoExtract).toContain("house__memory_finish_sources");
+    expect(task.source).toMatchObject({
+      role: "user",
+      revision: 1,
+      content: "我喝咖啡不加糖。",
+    });
+    expect(decoded(await opening())).toMatchObject({ source: task.source });
+    expect(store.getBulkExtractStatus().remaining).toBe(1);
+    expect(
+      (
+        await call(
+          "memory_submit",
+          proposal(task.source.sourceId, task.source.content)
+        )
+      ).isError
+    ).not.toBe(true);
+    expect(
+      (
+        await call("memory_finish_sources", {
+          sources: [
+            { messageId: task.source.sourceId, revision: task.source.revision },
+          ],
+          reason: "已保存",
+        })
+      ).isError
+    ).not.toBe(true);
+    expect(store.getBulkExtractStatus().remaining).toBe(0);
+    expect(store.status().activeMemories).toBe(1);
+    expect(decoded(await opening())).not.toHaveProperty("autoExtract");
+  });
+
+  it("长开聊结果首段就指明续读工具，续读可以还原原文", async () => {
+    const content = "周末🍵".repeat(100);
+    store.upsertMessages([archive("长", content)]);
+    const args = { chatStart: true };
+    expect(decoded(await callRaw("memory_search", args))).toMatchObject({
+      segmented: true,
+      autoExtract: expect.stringContaining("house__memory_read_result"),
+    });
+    expect(decoded(await call("memory_search", args))).toMatchObject({
+      source: { content },
+    });
+    expect(store.getBulkExtractStatus().remaining).toBe(1);
+  });
+
   it("整理全部在同一对话中接力下一批，暂停后不领取，完成后停止提示", async () => {
     const messages = Array.from({ length: 13 }, (_, i) =>
       archive(String(i), i ? "你好" : "我喝咖啡不加糖。")
@@ -309,7 +362,9 @@ describe("本地记忆 MCP 真实协议集成", () => {
       );
     expect(
       decoded(await call("memory_search", { chatStart: true }))
-    ).toMatchObject({ autoExtract: expect.stringContaining("bulk:true") });
+    ).toMatchObject({
+      autoExtract: expect.stringContaining("house__memory_finish_sources"),
+    });
     const batch = await read();
     expect(batch).toHaveLength(12);
     const proposalInput = proposal(batch[0].sourceId, batch[0].content);

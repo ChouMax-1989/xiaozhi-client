@@ -888,6 +888,7 @@ describe("MCPServiceManager - 记忆工具别名的日志隔离", () => {
       expect.objectContaining({
         toolName: "memory_search",
         success: false,
+        arguments: { redacted: "[记忆正文已隐藏]", chatStart: "omitted" },
         error: "[记忆正文已隐藏]",
       })
     );
@@ -900,6 +901,52 @@ describe("MCPServiceManager - 记忆工具别名的日志隔离", () => {
       { error: "[记忆正文已隐藏]" }
     );
   });
+
+  it.each([
+    [
+      { chatStart: true },
+      { autoExtract: "私密指令", memories: [] },
+      true,
+      "present",
+    ],
+    [
+      { chatStart: false },
+      { memories: [{ autoExtract: "私密引文" }] },
+      false,
+      "absent",
+    ],
+    [
+      {},
+      { segmented: true, chunk: "私密指令", autoExtract: "私密指令" },
+      "omitted",
+      "present",
+    ],
+    [
+      {},
+      { segmented: true, chunk: '{"autoExtract":"私密引文"}' },
+      "omitted",
+      "unknown",
+    ],
+    [{ chatStart: "私密参数" }, {}, "invalid", "unknown"],
+  ] as const)(
+    "检索只记录传参状态与顶层任务标记 %#",
+    async (args, response, chatStart, autoExtract) => {
+      const rawResult = {
+        content: [{ type: "text", text: JSON.stringify(response) }],
+      };
+      call.mockResolvedValue(rawResult);
+      expect(
+        await manager.callTool("family_recall", { ...args, query: "私密查询" })
+      ).toBe(rawResult);
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          arguments: { redacted: "[记忆正文已隐藏]", chatStart },
+          result: { redacted: "[记忆正文已隐藏]", autoExtract },
+        })
+      );
+      expect(JSON.stringify(record.mock.calls)).not.toContain("私密");
+    }
+  );
 
   it("普通工具别名保留参数、返回值和原日志", async () => {
     custom.getToolInfo.mockReturnValue({

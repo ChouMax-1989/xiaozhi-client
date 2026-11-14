@@ -113,4 +113,50 @@ describe("记忆日志的真实文件写入与查询", () => {
       secret
     );
   });
+
+  it("检索诊断落盘并可查询，伪造字段和旧脱敏记录不产生诊断", async () => {
+    const redacted = "[记忆正文已隐藏]";
+    const secret = "合成私密指令与游标";
+    for (const value of [true, false]) {
+      await writer.recordToolCall({
+        toolName: "family__memory_search",
+        arguments: { redacted, chatStart: value, query: secret },
+        result: {
+          redacted,
+          autoExtract: value ? "present" : "absent",
+          cursor: secret,
+        },
+        success: true,
+      });
+    }
+    await writer.recordToolCall({
+      toolName: "memory_search",
+      arguments: { redacted, chatStart: secret },
+      result: { redacted, autoExtract: secret },
+      success: true,
+    });
+    await writer.recordToolCall({
+      toolName: "memory_search",
+      arguments: { redacted },
+      result: redacted,
+      success: true,
+    });
+    const disk = readFileSync(filePath, "utf8");
+    expect(disk).not.toContain(secret);
+    const { records } = await reader.getToolCallLogs();
+    for (const value of [true, false]) {
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          arguments: { redacted, chatStart: value },
+          result: { redacted, autoExtract: value ? "present" : "absent" },
+        })
+      );
+    }
+    expect(
+      records.filter((record) => record.toolName === "memory_search")
+    ).toEqual([
+      expect.objectContaining({ arguments: { redacted }, result: redacted }),
+      expect.objectContaining({ arguments: { redacted }, result: redacted }),
+    ]);
+  });
 });

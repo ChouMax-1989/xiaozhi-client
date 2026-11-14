@@ -71,7 +71,7 @@ function createStdioTransport(
   return new StdioClientTransport({
     command: config.command,
     args: config.args || [],
-    env: config.env, // 传递环境变量
+    env: { ...config.env, XIAOZHI_MCP_SERVICE_NAME: config.name },
   });
 }
 

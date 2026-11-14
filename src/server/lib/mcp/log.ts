@@ -14,6 +14,7 @@ import pino from "pino";
 import type { Logger as PinoLogger } from "pino";
 import { logger } from "../../Logger.js";
 import { PathUtils } from "../../utils/path-utils.js";
+import { isMemorySearch } from "./memory-search-log.js";
 
 // ==================== 类型定义 ====================
 
@@ -50,13 +51,35 @@ function redactRecord(record: ToolCallRecord): ToolCallRecord {
   if (!sensitive) {
     return record;
   }
+  const search = isMemorySearch(record.originalToolName ?? record.toolName);
+  const chatStart = record.arguments?.chatStart;
+  const result = record.result;
+  const state =
+    result &&
+    typeof result === "object" &&
+    "autoExtract" in result &&
+    "redacted" in result &&
+    result.redacted === MEMORY_LOG_REDACTION
+      ? result.autoExtract
+      : undefined;
+  const safeResult =
+    search && (state === "present" || state === "absent" || state === "unknown")
+      ? { redacted: MEMORY_LOG_REDACTION, autoExtract: state }
+      : MEMORY_LOG_REDACTION;
   return {
     ...record,
     arguments:
       record.arguments === undefined
         ? undefined
-        : { redacted: MEMORY_LOG_REDACTION },
-    result: record.result === undefined ? undefined : MEMORY_LOG_REDACTION,
+        : {
+            redacted: MEMORY_LOG_REDACTION,
+            ...(search &&
+              record.arguments?.redacted === MEMORY_LOG_REDACTION &&
+              (typeof chatStart === "boolean" ||
+                chatStart === "omitted" ||
+                chatStart === "invalid") && { chatStart }),
+          },
+    result: result === undefined ? undefined : safeResult,
     error: record.error === undefined ? undefined : MEMORY_LOG_REDACTION,
   };
 }

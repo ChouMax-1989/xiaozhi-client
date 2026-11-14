@@ -44,7 +44,7 @@ export async function startMemoryStdio(env: NodeJS.ProcessEnv = process.env) {
     throw error;
   }
 
-  const server = createMemoryServer(store, guard);
+  const server = createMemoryServer(store, guard, env.XIAOZHI_MCP_SERVICE_NAME);
   const transport = new StdioServerTransport();
   const abort = new AbortController();
   let timer: NodeJS.Timeout | undefined;

@@ -18,6 +18,7 @@ const cliPath = join(root, "dist/memory/cli.js");
 const env = {
   ...process.env,
   XIAOZHI_MEMORY_AGENT_ID: "smoke-agent",
+  XIAOZHI_MCP_SERVICE_NAME: "memory",
   XIAOZHI_MEMORY_DB: database,
   XIAOZHI_MEMORY_CLIENT_CONFIG: configFile,
   XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS: "0",
@@ -77,8 +78,10 @@ try {
   await client.connect(transport);
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 11);
-  const sources = await call("memory_read_sources");
-  const source = sources.messages[0];
+  const opening = await call("memory_search", {chatStart: true});
+  assert.ok(opening.autoExtract.includes("memory__memory_finish_sources"));
+  const source = opening.source;
+  assert.equal(cli(["status"]).bulkExtract.remaining, 1);
   assert.equal(source.content, content);
   const input = {
     requestId: "smoke-memory-1", operation: "add", subject: { kind: "speaker" },
@@ -89,6 +92,8 @@ try {
   const submitted = await call("memory_submit", input);
   const retried = await call("memory_submit", input);
   assert.equal(submitted.operationId, retried.operationId);
+  await call("memory_finish_sources", { sources: [{ messageId: source.sourceId, revision: source.revision }], reason: "已读完并保存合成记忆" });
+  assert.equal(cli(["status"]).bulkExtract.remaining, 0);
   assert.equal(cli(["status"]).activeMemories, 1);
   const situational = await call("memory_search", { category: "situational" });
   assert.equal(situational.memories.length, 1);

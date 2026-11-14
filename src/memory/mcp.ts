@@ -26,13 +26,6 @@ const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_TTL_MS = 120_000;
 const identifierSchema = z.string().min(1).max(200);
 const emptySchema = z.object({}).strict();
-const bulkInstruction =
-  "调用 memory_read_sources(bulk:true) 整理一批。读全原文，提交值得保存的记忆，用 memory_finish_sources 标记已处理的消息。按回执继续取下一批，直到完成或暂停。";
-
-function openingTask(store: MemoryStore) {
-  return store.startBulkExtractOnChat() ? { autoExtract: bulkInstruction } : {};
-}
-
 /** 底层解析或文件错误可能含原文和路径，只向调用者返回固定说明。 */
 export function safeMemoryError(error: unknown): string {
   if (error instanceof z.ZodError) {
@@ -154,7 +147,48 @@ function safeStatus(store: MemoryStore) {
 }
 
 /** 权限检查先于每次读取或写入，输入对象在 SDK 层严格拒绝额外字段。 */
-export function createMemoryServer(store: MemoryStore, guard: () => void) {
+export function createMemoryServer(
+  store: MemoryStore,
+  guard: () => void,
+  serviceName?: string
+) {
+  const tool = (name: string) =>
+    serviceName ? `${serviceName}__${name}` : name;
+  const openingTask = () => {
+    if (!store.startBulkExtractOnChat()) return;
+    const [message] = store.readSources({ bulk: true, limit: 1 }).messages;
+    if (!message) return;
+    const {
+      sourceId,
+      revision,
+      role,
+      content,
+      createdAt,
+      assistantStage,
+      chatId,
+    } = message;
+    // 同一次检索交付真实待办；只有显式审阅回执才能推进队列。
+    const excerpt = prefix(content, 6000);
+    return {
+      autoExtract: `现在审阅下方历史原文。值得记住的用户原话先用 ${tool("memory_submit")} 保存；读完并处理后调用 ${tool("memory_finish_sources")}。`,
+      source: {
+        sourceId,
+        revision,
+        role,
+        scope: store.scopeForChat(chatId),
+        createdAt,
+        origin: message.origin ?? "archive",
+        ...(assistantStage ? { assistantStage } : {}),
+        content: excerpt,
+        ...(excerpt.length < content.length
+          ? {
+              nextOffset: excerpt.length,
+              continueWith: tool("memory_read_source"),
+            }
+          : {}),
+      },
+    };
+  };
   const server = new McpServer(
     { name: "xiaozhi-local-memory", version: "1.0.0" },
     { instructions: MEMORY_SERVER_INSTRUCTIONS }
@@ -199,6 +233,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         hash: string;
         version: number;
         expires: number;
+        opening: boolean;
         offsets: Map<number, number>;
       }
     | undefined;
@@ -218,6 +253,11 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
     const build = (end: number) =>
       result({
         segmented: true,
+        ...(offset === 0 && current.opening
+          ? {
+              autoExtract: `先用 ${tool("memory_read_result")} 按 cursor 和 nextOffset 读完，再整理。`,
+            }
+          : {}),
         cursor: current.cursor,
         offset,
         nextOffset: end < current.text.length ? end : null,
@@ -267,6 +307,11 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
       if (Buffer.byteLength(text, "utf8") > MAX_SNAPSHOT_BYTES)
         throw new MemoryError("结果超过可续读上限，请缩小查询范围后重试。");
       snapshot = {
+        opening:
+          typeof value === "object" &&
+          value !== null &&
+          "autoExtract" in value &&
+          "source" in value,
         cursor: randomUUID(),
         text,
         hash: createHash("sha256").update(text, "utf8").digest("hex"),
@@ -424,8 +469,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           nextCursor: args.bulk ? null : page.nextCursor,
           ...(args.bulk
             ? {
-                instruction:
-                  "本批完整处理后调用 memory_finish_sources；若回执要求继续，仍用 bulk:true 读取下一批。",
+                instruction: `本批处理后调用 ${tool("memory_finish_sources")}；按回执继续。`,
               }
             : {}),
           relatedMemories,
@@ -492,7 +536,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
             .boolean()
             .optional()
             .describe(
-              "仅在新对话第一次查记忆时传 true，同时检查有无自动提炼任务"
+              "仅在新对话第一次查记忆时传 true，同时领取待整理原文，按 autoExtract 调用下一步"
             ),
           category: z.enum(["user_profile", "situational"]).optional(),
           includeCandidates: z.boolean().default(false),
@@ -543,14 +587,19 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
         const memories = matches
           .slice(0, args.limit - provisionalCaptures.length)
           .map((memory) => memoryView(store, memory));
+        const task = args.chatStart ? openingTask() : undefined;
         return {
-          ...(args.chatStart ? openingTask(store) : {}),
+          ...task,
           memories,
           ...(args.includeCandidates ? { provisionalCaptures } : {}),
           hasMore:
             matches.length > memories.length ||
             captureMatches.length > provisionalCaptures.length,
-          note: "候选不是已确认事实。暂存候选只检索最近50条，固定为unverified，不能作为原始来源。结构化记忆保留作用域、时间和来源；有更多结果时请缩小关键词或调整limit。",
+          ...(task && !memories.length && !provisionalCaptures.length
+            ? {}
+            : {
+                note: "候选不是已确认事实。暂存候选只检索最近50条，固定为unverified，不能作为原始来源。结构化记忆保留作用域、时间和来源；有更多结果时请缩小关键词或调整limit。",
+              }),
         };
       })
   );
@@ -604,8 +653,7 @@ export function createMemoryServer(store: MemoryStore, guard: () => void) {
           ...(bulkExtract.total > 0 ? { bulkExtract } : {}),
           ...(bulkExtract.active
             ? {
-                autoExtract:
-                  "继续调用 memory_read_sources(bulk:true) 取下一批。",
+                autoExtract: `继续调用 ${tool("memory_read_sources")}(bulk:true) 取下一批。`,
               }
             : {}),
         };

@@ -34,6 +34,11 @@ import { getEventBus } from "../../services/event-bus.service.js";
 import type { MCPMessage } from "../../types/mcp.js";
 import { CustomMCPHandler } from "./custom.js";
 import { ToolCallLogger } from "./log.js";
+import {
+  isMemorySearch,
+  loggedAutoExtract,
+  loggedChatStart,
+} from "./memory-search-log.js";
 import { MCPMessageHandler } from "./message.js";
 
 /** 解析后的工具调用目标 */
@@ -798,8 +803,12 @@ export class MCPServiceManager extends EventEmitter {
     const sensitive =
       isMemoryToolName(target.toolName) ||
       isMemoryToolName(target.originalName);
+    const memorySearch = isMemorySearch(target.originalName);
     const loggedArguments = sensitive
-      ? { redacted: MEMORY_LOG_REDACTION }
+      ? {
+          redacted: MEMORY_LOG_REDACTION,
+          ...(memorySearch && { chatStart: loggedChatStart(arguments_) }),
+        }
       : arguments_;
 
     try {
@@ -811,7 +820,12 @@ export class MCPServiceManager extends EventEmitter {
         toolName: target.originalName,
         serverName: target.logServerName,
         arguments: loggedArguments,
-        result: redactToolLogValue(result, sensitive),
+        result: memorySearch
+          ? {
+              redacted: MEMORY_LOG_REDACTION,
+              autoExtract: loggedAutoExtract(result),
+            }
+          : redactToolLogValue(result, sensitive),
         success: result.isError !== true,
         duration: Date.now() - startTime,
       });
