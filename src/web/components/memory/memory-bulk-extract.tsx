@@ -56,7 +56,7 @@ export function MemoryBulkExtract({
           {status && status.total > 0
             ? `${enabled === false ? "，" : ""}已整理 ${status.total - status.remaining} / ${status.total} 条，剩余 ${status.remaining} 条`
             : null}
-          {enabled && !status?.active ? " 等待下次开聊" : null}
+          {enabled && !status?.active ? " 等待整理" : null}
         </output>
       </div>
       <p
@@ -71,7 +71,7 @@ export function MemoryBulkExtract({
         >
           更新角色介绍
         </button>
-        。开新对话时，小智会把当时待整理的原文分批处理。如果上次中断，会先接着整理那一批。暂停后保留进度，重启服务也会保持暂停。
+        。告别时只整理本次对话的一小批原文。要整理积压，请使用「复制整理提示」。暂停会保留批量任务的进度。
       </p>
       {error ? (
         <p role="alert" className="text-sm text-destructive">

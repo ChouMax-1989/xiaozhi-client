@@ -94,7 +94,7 @@ describe("记忆页面同步状态", () => {
     await act(async () => {
       render(<MemoryPage />);
     });
-    expect(screen.getByText("等待下次开聊")).toBeVisible();
+    expect(screen.getByText("等待整理")).toBeVisible();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "暂停整理" }));
     });
@@ -121,7 +121,7 @@ describe("记忆页面同步状态", () => {
         body: JSON.stringify({ enabled: true }),
       })
     );
-    expect(screen.getByText("等待下次开聊")).toBeVisible();
+    expect(screen.getByText("等待整理")).toBeVisible();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "更新角色介绍" }));
     });

@@ -5,18 +5,18 @@
 工具名以小智实际发现的列表为准；服务名为 memory 时通常是 memory__memory_search 等。工具启停或升级后，让小智重新发现工具或重连。此操作不需要网页登录凭据，不开启自动同步；角色介绍需要你在准备部署后粘贴，本次没有改动官方控制台。
 
 ```text
-新对话先用 memory__memory_search（chatStart=true）查记忆；收到 autoExtract 就按提示整理，回执提示继续时接着处理下一批。用户提起往事时再查相关记忆。
-每轮用 memory__memory_record_turn 逐条保存用户原话、你的回复和其他工具的结果。
-用户说到偏好、计划或重要经历时，用 memory__memory_read_sources 读取本次对话的原话，再用 memory__memory_submit 保存值得记住的内容。
-用户请你操作设备时，调用对应工具，按结果回答。
+正常聊天时先回应。用户问起往事，用 memory__memory_search 查相关记忆。用户请你操作设备时，调用对应工具，按结果回答。
+用户明确告别时，先用 memory__memory_record_turn 按顺序逐条归档本次可见且尚未保存的用户原话、你已说过的回复和其他工具结果。同一段对话沿用同一会话编号。
+归档成功后用 memory__memory_status 查看自动提炼开关。开启时，用 memory__memory_read_sources 按归档回执里的 chatId 读取本次待整理原文，每次最多整理一小批。
+读完原文，用 memory__memory_submit 保存用户托你记住的事，以及值得记住的偏好、计划或经历。引用原话，分清谁说的、说的是谁，身份不明就留空。用 memory__memory_finish_sources 标记已处理完的原文。最后自然道别一次，工具出错也照常道别。用户继续说话就先回应。
 ```
 
-看板会按本地服务名生成工具全名。开聊检索和按话题更新的写法可参照 [MCP 记忆服务示例](https://github.com/modelcontextprotocol/servers/tree/main/src/memory#system-prompt)和[小智 Pro 长期记忆教程](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/start.html)。
+看板会按本地服务名生成工具全名。
 
 ## 启用后检查
 
 1. 请小智调用 memory_status，确认接入的是预期智能体。
-2. 留一条含测试偏好的待整理消息，另开新对话正常聊天。批量提炼默认开启，小智首次查记忆时会领取待整理消息。在「记忆库 → 提炼记忆 → 整理全部」核对进度和提炼出的条目，点开来源核对原话。如果曾手动暂停，先点「继续整理」再开新对话。
+2. 聊天中提到一项偏好，再明确告别。检查本次对话是否归档，自动提炼开启时检查来源、原话和审阅进度。
 3. 要求读取一条长文本，确认 memory_read_result 连续读取到 nextOffset:null；原文自己的分页也应读完。1024字节是完整工具响应的上限，不是每段固定有1024字节正文。
 4. 开新对话检索刚保存的内容。模型来源提炼仍是候选，不能把候选称为已确认事实。图谱只展示本地存量记忆关联，不改变提炼及检索能力。
 

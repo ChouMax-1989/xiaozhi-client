@@ -16,14 +16,14 @@ export const MEMORY_EXTRACTION_RULES = `你正在为当前本地记忆库整理�
 14. 工具结果 segmented=true 时先用 memory_read_result 按 nextOffset 完成传输续读，拼接 chunk 校验后解析 JSON；再按原文自身 nextOffset 使用 memory_read_source。工具名前缀以实际列表为准。`;
 
 export function memoryRolePrompt(serviceName = "memory") {
-  return `新对话先用 ${serviceName}__memory_search（chatStart=true）查记忆；收到 autoExtract 就按提示整理，回执提示继续时接着处理下一批。用户提起往事时再查相关记忆。
-每轮用 ${serviceName}__memory_record_turn 逐条保存用户原话、你的回复和其他工具的结果。
-用户说到偏好、计划或重要经历时，用 ${serviceName}__memory_read_sources 读取本次对话的原话，再用 ${serviceName}__memory_submit 保存值得记住的内容。
-用户请你操作设备时，调用对应工具，按结果回答。`;
+  return `正常聊天时先回应。用户问起往事，用 ${serviceName}__memory_search 查相关记忆。用户请你操作设备时，调用对应工具，按结果回答。
+用户明确告别时，先用 ${serviceName}__memory_record_turn 按顺序逐条归档本次可见且尚未保存的用户原话、你已说过的回复和其他工具结果。同一段对话沿用同一会话编号。
+归档成功后用 ${serviceName}__memory_status 查看自动提炼开关。开启时，用 ${serviceName}__memory_read_sources 按归档回执里的 chatId 读取本次待整理原文，每次最多整理一小批。
+读完原文，用 ${serviceName}__memory_submit 保存用户托你记住的事，以及值得记住的偏好、计划或经历。引用原话，分清谁说的、说的是谁，身份不明就留空。用 ${serviceName}__memory_finish_sources 标记已处理完的原文。最后自然道别一次，工具出错也照常道别。用户继续说话就先回应。`;
 }
 
 export const MEMORY_SERVER_INSTRUCTIONS =
-  "这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型不能导入官方档案、访问本机路径、读取凭据、同步远端或撤销历史。对话开始或回忆往事时用 memory_search(includeCandidates:true)，候选只作线索。每轮调用 memory_record_turn，按实际列表选择工具。";
+  "这是固定绑定单个智能体的本地记忆服务。按 memory_read_sources → memory_read_source（需要时）→ memory_search → memory_submit → memory_finish_sources 整理材料。聚合器可能添加 memory__ 前缀，调用名称以真实工具列表为准。检索默认只含有效正式记忆；身份由本机配置决定。模型不能导入官方档案、访问本机路径、读取凭据、同步远端或撤销历史。回忆往事时用 memory_search，候选只作线索。用户明确告别时先用 memory_record_turn 归档，再按自动提炼开关整理本次对话，最后道别。";
 
 export const TRUNCATED_SOURCE_WARNING =
   "这条原文仅显示片段。请按 nextOffset 调用 memory_read_source，保持同一 sourceId 和 revision；缺失的上下文不能作为证据，未读完不能标记整条来源已处理。";

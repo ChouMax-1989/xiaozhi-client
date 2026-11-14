@@ -30,7 +30,7 @@ export default function DashboardPage() {
         </h3>
         <p className="text-sm leading-relaxed text-muted-foreground">
           在小智 AI
-          控制台打开智能体的「角色介绍」，开启「自定义」，将以下提示词追加到末尾并保存。
+          控制台打开智能体的「角色介绍」，开启「自定义」，首次使用时把以下规则追加到人设末尾。已有记忆规则时，只替换旧规则并保存。
         </p>
         {prompt ? (
           <>
