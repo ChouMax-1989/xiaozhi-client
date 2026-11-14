@@ -72,7 +72,9 @@ describe("本地记忆 MCP 真实协议集成", () => {
         store.bindMetadata(key, value)
       )
     );
-    server = createMemoryServer(store, guard, "house");
+    server = createMemoryServer(store, guard, "house", {
+      chatStartClaim: true,
+    });
     client = new Client({ name: "memory-protocol-test", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -226,6 +228,51 @@ describe("本地记忆 MCP 真实协议集成", () => {
     expect(store.status().memories).toBe(0);
   });
 
+  it("禁用开聊领取时兼容旧参数且仍可显式审阅来源", async () => {
+    await client.close();
+    await server.close();
+    server = createMemoryServer(store, guard, "house");
+    client = new Client({ name: "memory-protocol-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    store.upsertMessages([archive("甲", "我喝咖啡不加糖。")]);
+    const before = store.getBulkExtractStatus();
+    const search = (await client.listTools()).tools.find(
+      (item) => item.name === "memory_search"
+    );
+    expect(JSON.stringify(search?.inputSchema)).not.toContain("领取待整理原文");
+    const result = decoded(
+      await call("memory_search", { chatStart: true, query: "咖啡" })
+    );
+    expect(result).toEqual(
+      decoded(await call("memory_search", { query: "咖啡" }))
+    );
+    expect(result).not.toHaveProperty("autoExtract");
+    expect(result).not.toHaveProperty("source");
+    expect(store.getBulkExtractStatus()).toEqual(before);
+    const { messages } = decoded<{ messages: SourceView[] }>(
+      await call("memory_read_sources")
+    );
+    expect(messages).toHaveLength(1);
+    expect(
+      (
+        await call("memory_finish_sources", {
+          sources: messages.map(({ sourceId, revision }) => ({
+            messageId: sourceId,
+            revision,
+          })),
+          reason: "已审阅",
+        })
+      ).isError
+    ).not.toBe(true);
+    expect(
+      decoded<{ messages: SourceView[] }>(await call("memory_read_sources"))
+        .messages
+    ).toHaveLength(0);
+  });
+
   it("新对话按网页开关分批整理旧消息，中断后继续且不重复读取已完成的版本", async () => {
     const opening = async () =>
       decoded(await call("memory_search", { chatStart: true }));
@@ -342,7 +389,7 @@ describe("本地记忆 MCP 真实协议集成", () => {
   });
 
   it("整理全部在同一对话中接力下一批，暂停后不领取，完成后停止提示", async () => {
-    const messages = Array.from({ length: 13 }, (_, i) =>
+    const messages = Array.from({ length: 2 }, (_, i) =>
       archive(String(i), i ? "你好" : "我喝咖啡不加糖。")
     );
     store.upsertMessages(messages);
@@ -366,7 +413,7 @@ describe("本地记忆 MCP 真实协议集成", () => {
       autoExtract: expect.stringContaining("house__memory_finish_sources"),
     });
     const batch = await read();
-    expect(batch).toHaveLength(12);
+    expect(batch).toHaveLength(1);
     const proposalInput = proposal(batch[0].sourceId, batch[0].content);
     expect((await call("memory_submit", proposalInput)).isError).not.toBe(true);
     expect(await finish(batch)).toMatchObject({
@@ -644,6 +691,65 @@ describe("本地记忆 MCP 真实协议集成", () => {
     expect(guard).toHaveBeenCalledTimes(10);
     expect(store.status().memories).toBe(0);
     expect(store.status().provisionalCaptures).toBe(0);
+  });
+
+  it("整理任务默认和显式 bulk 返回完整小回执，长原文可逐段读完", async () => {
+    const content = "长原文🙂".repeat(180);
+    store.upsertMessages([
+      archive("长来源", content),
+      archive("短来源", "我喜欢喝茶。"),
+    ]);
+    store.setBulkExtractEnabled(true);
+    const firstResponse = await callRaw("memory_read_sources");
+    expect(
+      Buffer.byteLength(JSON.stringify(firstResponse))
+    ).toBeLessThanOrEqual(768);
+    const page = decoded<{
+      messages: SourceView[];
+      instruction: string;
+      segmented?: boolean;
+    }>(firstResponse);
+    expect(page.segmented).toBeUndefined();
+    expect(page.instruction).toContain("memory_finish_sources");
+    const first = page.messages[0];
+    expect(first.truncated).toBe(true);
+    expect(first.warning).toContain("读完");
+    expect(
+      (
+        await call("memory_finish_sources", {
+          sources: [{ messageId: first.sourceId, revision: first.revision }],
+          reason: "未读完",
+        })
+      ).isError
+    ).toBe(true);
+    let reconstructed = first.content;
+    let offset = first.nextOffset;
+    while (offset !== null) {
+      const raw = await callRaw("memory_read_source", {
+        messageId: first.sourceId,
+        revision: first.revision,
+        offset,
+        compact: true,
+      });
+      expect(Buffer.byteLength(JSON.stringify(raw))).toBeLessThanOrEqual(768);
+      const part = decoded<SourceView & { segmented?: boolean }>(raw);
+      expect(part.segmented).toBeUndefined();
+      expect(part.nextOffset === null || part.nextOffset > offset).toBe(true);
+      reconstructed += part.content;
+      offset = part.nextOffset;
+    }
+    expect(reconstructed).toBe(content);
+    await call("memory_finish_sources", {
+      sources: [{ messageId: first.sourceId, revision: first.revision }],
+      reason: "已完整审阅",
+    });
+    const short = await callRaw("memory_read_sources", { bulk: true });
+    expect(Buffer.byteLength(JSON.stringify(short))).toBeLessThanOrEqual(768);
+    expect(
+      decoded<{ messages: SourceView[]; segmented?: boolean }>(short)
+    ).toMatchObject({
+      messages: [{ content: "我喜欢喝茶。", truncated: false }],
+    });
   });
 
   it("长消息明确截断并能按版本分片还原全文，单次响应始终有界", async () => {

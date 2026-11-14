@@ -70,6 +70,8 @@ export interface HistorySyncOptions {
   agentId: string;
   tokenFile: string;
   maxRequests?: number;
+  // 独立于完整核对预算，仅用于定时检查列表第一页。
+  recentMaxRequests?: number;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
@@ -351,13 +353,17 @@ export async function syncHistory(
 
   try {
     const budget = options.maxRequests ?? 100;
+    const recentBudget = options.recentMaxRequests ?? 0;
     if (
       typeof options.agentId !== "string" ||
       options.agentId.trim().length === 0 ||
       options.agentId.length > 200 ||
       !Number.isSafeInteger(budget) ||
       budget < 0 ||
-      budget > 10_000
+      budget > 10_000 ||
+      !Number.isSafeInteger(recentBudget) ||
+      recentBudget < 0 ||
+      recentBudget > 100
     ) {
       throw new SyncFailure("error", "invalid_configuration");
     }
@@ -379,7 +385,62 @@ export async function syncHistory(
       throw new SyncFailure("error", "token_file_error");
     }
     sink.setSyncState({ ...state, chatIds: [...state.chatIds] });
-    while (requests < budget) {
+    // 列表按服务端顺序取第一页；每个会话只取首尾消息页，超出范围由全量扫描补齐。
+    // 临时状态绝不写入完整扫描检查点，失败时下次从列表重新尝试。
+    if (recentBudget >= 2) {
+      const recent = restartScan(state);
+      requests++;
+      const list = await fetchPage(recent, token, options);
+      if (
+        (list.totalPages === 0 && list.list.length !== 0) ||
+        (list.totalPages > 1 && list.list.length === 0)
+      )
+        invalidResponse();
+      const chats = list.list.map((raw) => {
+        const id = sourceId(raw.id);
+        checkScope(raw, options.agentId, id);
+        return { id, raw };
+      });
+      const seen = new Set<string>();
+      for (const chat of chats) {
+        if (requests >= recentBudget) break;
+        if (seen.has(chat.id)) continue;
+        seen.add(chat.id);
+        sink.upsertChat(chat);
+        chatsVisited++;
+        recent.phase = "messages";
+        recent.chatIds = [chat.id];
+        recent.chatIndex = 0;
+        recent.page = 1;
+        requests++;
+        const first = await fetchPage(recent, token, options);
+        if (
+          (first.totalPages === 0 && first.list.length !== 0) ||
+          (first.totalPages > 1 && first.list.length === 0)
+        )
+          invalidResponse();
+        const save = (page: HistoryPage) => {
+          const imported = sink.upsertMessages(
+            page.list.map((raw) =>
+              archiveMessage(raw, options.agentId, chat.id)
+            )
+          );
+          counts.inserted += imported.inserted;
+          counts.updated += imported.updated;
+          counts.unchanged += imported.unchanged;
+        };
+        save(first);
+        if (first.totalPages > 1 && requests < recentBudget) {
+          recent.page = first.totalPages;
+          requests++;
+          const last = await fetchPage(recent, token, options);
+          // 变化时保留已保存的第一页，下一轮再刷新；不阻塞完整扫描。
+          if (last.totalPages === first.totalPages) save(last);
+        }
+      }
+    }
+    const fullScanStart = requests;
+    while (requests - fullScanStart < budget) {
       checkCancelled(options.signal);
       requests++;
       const page = await fetchPage(state, token, options);

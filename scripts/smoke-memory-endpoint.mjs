@@ -107,6 +107,7 @@ try {
   await new Promise((done) => reservation.close(done));
   const configPath = join(directory, "xiaozhi.config.json");
   const memoryEnv = {
+    XIAOZHI_MEMORY_CHAT_START_CLAIM: "1", // 通过完整接入点验证显式启用的旧版开聊模式。
     XIAOZHI_MEMORY_AGENT_ID: "synthetic-endpoint-agent", XIAOZHI_MEMORY_DB: join(directory, "archive.sqlite"),
     XIAOZHI_MEMORY_CLIENT_CONFIG: configPath, XIAOZHI_MEMORY_SYNC_INTERVAL_SECONDS: "0",
   };
@@ -137,7 +138,7 @@ try {
     assert.deepEqual((await response.json()).data, { enabled });
   }
   const opening = () => invoke(peer, "memory_search", { chatStart: true });
-  assert.ok((await opening()).source, "默认开启，新对话直接收到原文");
+  assert.ok((await opening()).source, "显式启用兼容模式后，新对话收到原文");
   await setAutoExtract(false);
   assert.equal((await opening()).autoExtract, undefined);
   await setAutoExtract(true);
@@ -152,7 +153,16 @@ try {
   assert.match(task.autoExtract, /memory__memory_finish_sources/u);
   assert.equal(task.source.content, archiveText.slice(0, task.source.nextOffset));
   assert.equal(task.source.continueWith, "memory__memory_read_source");
-  assert.equal((await invoke(peer, "memory_read_sources", { bulk: true })).messages.length, 1);
+  const batch = await invoke(peer, "memory_read_sources", { bulk: true });
+  assert.equal(batch.messages.length, 1);
+  let part = batch.messages[0];
+  let reconstructed = part.content;
+  while (part.nextOffset !== null) {
+    part = await invoke(peer, "memory_read_source", { messageId: part.sourceId, revision: part.revision, offset: part.nextOffset, compact: true });
+    assert.equal(part.contentOffset, reconstructed.length);
+    reconstructed += part.content;
+  }
+  assert.equal(reconstructed, archiveText);
   await setAutoExtract(true);
   const record = { requestId: "endpoint-smoke-turn-1", conversationId: "synthetic-chat", role: "user", content: '  中文😀 e\u0301 "引号" \\ \n\t尾\r\n'.repeat(270) };
   assert.ok(record.content.length <= 8000);
@@ -171,7 +181,7 @@ try {
   const sourceRows = [];
   let afterId;
   do {
-    const page = await invoke(peer, "memory_read_sources", { limit: 1, ...(afterId ? { afterId } : {}) });
+    const page = await invoke(peer, "memory_read_sources", { pendingOnly: false, limit: 1, ...(afterId ? { afterId } : {}) });
     assert.equal(page.messages.length, 1);
     const row = page.messages[0];
     sourceRows.push(row);

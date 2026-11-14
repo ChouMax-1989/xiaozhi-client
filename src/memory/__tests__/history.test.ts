@@ -86,6 +86,86 @@ describe("官方历史只读同步", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  it("近期检查使用独立预算，保留工具结果并推进完整扫描断点", async () => {
+    const sink = new TestSink();
+    const calls: string[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get("page"));
+      if (url.pathname.endsWith("/list")) {
+        calls.push(`list:${page}`);
+        return response([{ id: "new" }, { id: "old" }], page, 1);
+      }
+      const chat = url.searchParams.get("chatId");
+      calls.push(`${chat}:${page}`);
+      expect(url.searchParams.get("includeTools")).toBe("1");
+      return response(
+        [{ id: `${chat}-${page}`, role: "tool", content: "result" }],
+        page,
+        chat === "new" ? 3 : 1
+      );
+    });
+    const options = {
+      agentId: AGENT,
+      tokenFile,
+      fetchImpl: fetcher,
+      maxRequests: 1,
+      recentMaxRequests: 4,
+    };
+    const first = await syncHistory(sink, options);
+    expect(first).toMatchObject({ reason: "request_budget", requests: 5 });
+    expect(calls).toEqual(["list:1", "new:1", "new:3", "old:1", "list:1"]);
+    expect(sink.messages.get("new/new-3")).toMatchObject({
+      role: "tool",
+      content: "result",
+    });
+    expect(sink.state).toMatchObject({
+      phase: "messages",
+      chatIndex: 0,
+      page: 1,
+    });
+    calls.length = 0;
+    const second = await syncHistory(sink, options);
+    expect(second.requests).toBe(5);
+    expect(calls.at(-1)).toBe("new:1");
+    expect(sink.state).toMatchObject({
+      phase: "messages",
+      chatIndex: 0,
+      page: 2,
+    });
+    expect(second.messages.unchanged).toBeGreaterThan(0);
+  });
+
+  it("近期请求失败后保留全量检查点，下次重试", async () => {
+    const sink = new TestSink();
+    let fail = true;
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/list")) return response([{ id: "new" }]);
+      if (fail) return new Response(null, { status: 503 });
+      return response([{ id: "m", role: "tool", content: "ok" }]);
+    });
+    const options = {
+      agentId: AGENT,
+      tokenFile,
+      fetchImpl: fetcher,
+      maxRequests: 1,
+      recentMaxRequests: 2,
+    };
+    expect(await syncHistory(sink, options)).toMatchObject({
+      reason: "server_error",
+      requests: 2,
+    });
+    expect(sink.state).toMatchObject({ phase: "chats", page: 1, chatIds: [] });
+    fail = false;
+    expect(await syncHistory(sink, options)).toMatchObject({
+      reason: "request_budget",
+      requests: 3,
+    });
+    expect(sink.messages.has("new/m")).toBe(true);
+    expect(sink.state).toMatchObject({ phase: "messages", page: 1 });
+  });
+
   it("逐页保存所有角色与原始字段，只有两轮一致后才完成", async () => {
     const sink = new TestSink();
     const first = {

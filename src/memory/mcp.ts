@@ -117,6 +117,61 @@ function sourceView(
   };
 }
 
+// 按最终 MCP 信封的 UTF-8 字节数裁剪，避免先生成巨大的工具结果快照。
+function compactSource(
+  store: MemoryStore,
+  source: SourceMessage,
+  offset: number,
+  length: number,
+  wrap: (value: ReturnType<typeof compactSourceValue>) => unknown
+) {
+  const build = (size: number) =>
+    compactSourceValue(store, source, offset, size);
+  let low = 0;
+  let high = Math.min(length, source.content.length - offset);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (
+      Buffer.byteLength(JSON.stringify(result(wrap(build(mid)))), "utf8") <=
+      MAX_RESULT_BYTES
+    )
+      low = mid;
+    else high = mid - 1;
+  }
+  const value = build(low);
+  if (value.nextOffset !== null && value.nextOffset === offset) {
+    throw new MemoryError(
+      "来源标识过长，精简回执无法容纳原文，请使用非精简读取。"
+    );
+  }
+  return value;
+}
+
+function compactSourceValue(
+  store: MemoryStore,
+  source: SourceMessage,
+  offset: number,
+  length: number
+) {
+  const content = prefix(source.content.slice(offset), length);
+  const end = offset + content.length;
+  return {
+    sourceId: source.sourceId,
+    revision: source.revision,
+    role: source.role,
+    scope: store.scopeForChat(source.chatId),
+    createdAt: source.createdAt,
+    content,
+    contentOffset: offset,
+    contentLength: source.content.length,
+    truncated: offset > 0 || end < source.content.length,
+    nextOffset: end < source.content.length ? end : null,
+    ...(end < source.content.length
+      ? { warning: "须读完全部片段才能完成来源。" }
+      : {}),
+  };
+}
+
 function safeStatus(store: MemoryStore) {
   const { sync, ...status } = store.status();
   const summary: Record<string, unknown> = {};
@@ -150,8 +205,14 @@ function safeStatus(store: MemoryStore) {
 export function createMemoryServer(
   store: MemoryStore,
   guard: () => void,
-  serviceName?: string
+  serviceName?: string,
+  options: { chatStartClaim?: boolean } = {}
 ) {
+  const chatStartClaim = options.chatStartClaim ?? false;
+  const unfinishedCompact = new Map<
+    string,
+    { revision: number; nextOffset: number }
+  >();
   const tool = (name: string) =>
     serviceName ? `${serviceName}__${name}` : name;
   const openingTask = () => {
@@ -407,6 +468,12 @@ export function createMemoryServer(
             .describe(
               "网页「整理全部」任务：传 true 读取下一批，忽略游标。先完成本批再取下一批。"
             ),
+          compact: z
+            .boolean()
+            .optional()
+            .describe(
+              "明确整理时传 true，每次返回一条精简原文，长原文使用 memory_read_source 的 compact 续读。"
+            ),
           limit: z.number().int().min(1).max(12).default(4),
         })
         .strict(),
@@ -414,6 +481,18 @@ export function createMemoryServer(
     },
     (args) =>
       run(() => {
+        const activeBulk = store.getBulkExtractStatus().active;
+        const compact =
+          args.bulk ||
+          args.compact ||
+          (activeBulk &&
+            !args.chatId &&
+            !args.afterId &&
+            args.pendingOnly &&
+            !args.automatic);
+        const useBulk = Boolean(
+          args.bulk || (compact && activeBulk && !args.chatId && !args.afterId)
+        );
         if (!args.bulk && args.automatic && !store.getAutoExtractEnabled())
           return {
             messages: [],
@@ -421,16 +500,42 @@ export function createMemoryServer(
             note: "自动提炼已关闭，继续聊天。",
           };
         const page = store.readSources(
-          args.bulk
-            ? { bulk: true, limit: 12 }
+          useBulk
+            ? { bulk: true, limit: compact ? 1 : 12 }
             : args.automatic
               ? {
                   pendingOnly: true,
                   limit: 2,
                   bulk: store.getBulkExtractStatus().active,
                 }
-              : args
+              : compact
+                ? { ...args, limit: 1 }
+                : args
         );
+        if (compact) {
+          const instruction = `记忆用 ${tool("memory_submit")}；读完全条后用 ${tool("memory_finish_sources")}({sources:[{messageId:sourceId,revision}],reason})。截断用 ${tool("memory_read_source")}({messageId:sourceId,revision,offset:nextOffset,compact:true})续读，读完前勿完成。`;
+          const wrap = (message?: ReturnType<typeof compactSourceValue>) => ({
+            messages: message ? [message] : [],
+            nextCursor: useBulk ? null : page.nextCursor,
+            instruction,
+          });
+          const source = page.messages[0];
+          if (!source) return wrap();
+          const view = compactSource(
+            store,
+            source,
+            0,
+            source.content.length,
+            wrap
+          );
+          if (view.nextOffset !== null)
+            unfinishedCompact.set(source.sourceId, {
+              revision: source.revision,
+              nextOffset: view.nextOffset,
+            });
+          else unfinishedCompact.delete(source.sourceId);
+          return wrap(view);
+        }
         if (args.bulk && !page.messages.length)
           return {
             messages: [],
@@ -491,11 +596,15 @@ export function createMemoryServer(
           revision: z.number().int().positive().optional(),
           offset: z.number().int().min(0).max(2_000_000).default(0),
           length: z.number().int().min(256).max(8_000).default(6_000),
+          compact: z
+            .boolean()
+            .optional()
+            .describe("精简分段回执，避免大结果续传。"),
         })
         .strict(),
       annotations: readOnly,
     },
-    ({ messageId, revision, offset, length }) =>
+    ({ messageId, revision, offset, length, compact }) =>
       run(() => {
         if (offset > 0 && revision === undefined) {
           throw new MemoryError(
@@ -519,7 +628,24 @@ export function createMemoryServer(
             "原文读取位置落在字符中间，请使用上一片段返回的 nextOffset。"
           );
         }
-        return sourceView(store, source, offset, length);
+        if (!compact) return sourceView(store, source, offset, length);
+        const view = compactSource(
+          store,
+          source,
+          offset,
+          length,
+          (value) => value
+        );
+        const pending = unfinishedCompact.get(messageId);
+        if (
+          pending &&
+          pending.revision === source.revision &&
+          pending.nextOffset === offset
+        ) {
+          if (view.nextOffset === null) unfinishedCompact.delete(messageId);
+          else pending.nextOffset = view.nextOffset;
+        }
+        return view;
       })
   );
 
@@ -536,7 +662,9 @@ export function createMemoryServer(
             .boolean()
             .optional()
             .describe(
-              "仅在新对话第一次查记忆时传 true，同时领取待整理原文，按 autoExtract 调用下一步"
+              chatStartClaim
+                ? "仅在新对话第一次查记忆时传 true，同时领取待整理原文，按 autoExtract 调用下一步"
+                : "兼容旧客户端的可选字段；不会影响检索或触发整理。"
             ),
           category: z.enum(["user_profile", "situational"]).optional(),
           includeCandidates: z.boolean().default(false),
@@ -587,7 +715,8 @@ export function createMemoryServer(
         const memories = matches
           .slice(0, args.limit - provisionalCaptures.length)
           .map((memory) => memoryView(store, memory));
-        const task = args.chatStart ? openingTask() : undefined;
+        const task =
+          chatStartClaim && args.chatStart ? openingTask() : undefined;
         return {
           ...task,
           memories,
@@ -646,6 +775,14 @@ export function createMemoryServer(
     },
     ({ sources, reason }) =>
       run(() => {
+        if (
+          sources.some(
+            ({ messageId, revision }) =>
+              unfinishedCompact.get(messageId)?.revision === revision
+          )
+        ) {
+          throw new MemoryError("来源仍有未读片段，请按顺序读完后再标记。");
+        }
         const result = store.finishSources(sources, reason);
         const bulkExtract = store.getBulkExtractStatus();
         return {

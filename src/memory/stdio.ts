@@ -24,6 +24,29 @@ function syncBudget(env: NodeJS.ProcessEnv): number {
   return value;
 }
 
+function recentSyncBudget(env: NodeJS.ProcessEnv): number {
+  const input = env.XIAOZHI_MEMORY_SYNC_RECENT_MAX_REQUESTS?.trim() || "5";
+  const value = Number(input);
+  if (
+    !/^\d+$/u.test(input) ||
+    !Number.isSafeInteger(value) ||
+    (value !== 0 && (value < 2 || value > 100))
+  ) {
+    throw new MemoryError(
+      "XIAOZHI_MEMORY_SYNC_RECENT_MAX_REQUESTS 必须为 0 或 2 到 100 的整数。"
+    );
+  }
+  return value;
+}
+
+function chatStartClaimEnabled(env: NodeJS.ProcessEnv): boolean {
+  const input = env.XIAOZHI_MEMORY_CHAT_START_CLAIM?.trim() || "0";
+  if (input !== "0" && input !== "1") {
+    throw new MemoryError("XIAOZHI_MEMORY_CHAT_START_CLAIM 必须为 0 或 1。");
+  }
+  return input === "1";
+}
+
 function log(message: string): void {
   process.stderr.write(`[本地记忆] ${message}\n`);
 }
@@ -32,6 +55,8 @@ function log(message: string): void {
 export async function startMemoryStdio(env: NodeJS.ProcessEnv = process.env) {
   const options = loadMemoryOptions(env);
   const maxRequests = syncBudget(env);
+  const recentMaxRequests = recentSyncBudget(env);
+  const chatStartClaim = chatStartClaimEnabled(env);
   // 首次启动先验证端点和身份，避免错误配置提前创建并绑定空库。
   checkClientBinding(options, () => undefined);
   const store = new MemoryStore(options.databasePath, options);
@@ -44,7 +69,14 @@ export async function startMemoryStdio(env: NodeJS.ProcessEnv = process.env) {
     throw error;
   }
 
-  const server = createMemoryServer(store, guard, env.XIAOZHI_MCP_SERVICE_NAME);
+  const server = createMemoryServer(
+    store,
+    guard,
+    env.XIAOZHI_MCP_SERVICE_NAME,
+    {
+      chatStartClaim,
+    }
+  );
   const transport = new StdioServerTransport();
   const abort = new AbortController();
   let timer: NodeJS.Timeout | undefined;
@@ -72,6 +104,7 @@ export async function startMemoryStdio(env: NodeJS.ProcessEnv = process.env) {
           agentId: options.agentId,
           tokenFile: options.tokenFile!,
           maxRequests,
+          recentMaxRequests,
           signal: abort.signal,
         });
         if (!stopped) {

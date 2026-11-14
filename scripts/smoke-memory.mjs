@@ -25,6 +25,7 @@ const env = {
 };
 delete env.XIAOZHI_MEMORY_OWNER;
 delete env.XIAOZHI_MEMORY_TOKEN_FILE;
+delete env.XIAOZHI_MEMORY_CHAT_START_CLAIM;
 let client;
 let transport;
 let diagnostics = "";
@@ -79,8 +80,11 @@ try {
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 11);
   const opening = await call("memory_search", {chatStart: true});
-  assert.ok(opening.autoExtract.includes("memory__memory_finish_sources"));
-  const source = opening.source;
+  assert.equal(opening.autoExtract, undefined);
+  assert.equal(opening.source, undefined);
+  assert.equal(cli(["status"]).bulkExtract.remaining, 0);
+  admin({ action: "setBulkExtractEnabled", enabled: true });
+  const { messages: [source] } = await call("memory_read_sources", {bulk: true});
   assert.equal(cli(["status"]).bulkExtract.remaining, 1);
   assert.equal(source.content, content);
   const input = {
